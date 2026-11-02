@@ -1,0 +1,61 @@
+[package]
+name = "auto-tlp"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+authors = ["Dacraezy1"]
+description = "Scans your hardware and generates a tailored TLP configuration"
+license = "GPL-3.0-or-later"
+repository = "https://github.com/Dacraezy1/auto-tlp"
+homepage = "https://github.com/Dacraezy1/auto-tlp"
+readme = "README.md"
+keywords = ["tlp", "linux", "battery", "power", "laptop"]
+categories = ["command-line-utilities", "hardware-support"]
+
+# Zero external dependencies on purpose: builds offline, tiny, auditable.
+[dependencies]
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+# ---------------------------------------------------------------- .deb (cargo-deb)
+[package.metadata.deb]
+name = "auto-tlp"
+maintainer = "Dacraezy1 <dacraezy1@users.noreply.github.com>"
+copyright = "2026, Dacraezy1"
+license-file = ["LICENSE", "0"]
+section = "utils"
+priority = "optional"
+depends = "tlp"
+recommends = "hdparm, iw, ethtool"
+extended-description = """\
+auto-tlp scans your machine (CPU and its frequency driver, battery, NVMe/SATA/HDD \
+storage, GPUs, Wi-Fi, USB, audio, ...) and writes a TLP configuration containing \
+only the settings your hardware actually supports."""
+assets = [
+  ["target/release/auto-tlp", "usr/bin/", "755"],
+  ["man/auto-tlp.1", "usr/share/man/man1/", "644"],
+  ["completions/auto-tlp.bash", "usr/share/bash-completion/completions/auto-tlp", "644"],
+  ["completions/_auto-tlp", "usr/share/zsh/vendor-completions/_auto-tlp", "644"],
+  ["completions/auto-tlp.fish", "usr/share/fish/vendor_completions.d/auto-tlp.fish", "644"],
+  ["README.md", "usr/share/doc/auto-tlp/README.md", "644"],
+]
+
+# ---------------------------------------------------------------- .rpm (cargo-generate-rpm)
+[package.metadata.generate-rpm]
+assets = [
+  { source = "target/release/auto-tlp", dest = "/usr/bin/auto-tlp", mode = "755" },
+  { source = "man/auto-tlp.1", dest = "/usr/share/man/man1/auto-tlp.1", mode = "644", doc = true },
+  { source = "completions/auto-tlp.bash", dest = "/usr/share/bash-completion/completions/auto-tlp", mode = "644" },
+  { source = "completions/_auto-tlp", dest = "/usr/share/zsh/site-functions/_auto-tlp", mode = "644" },
+  { source = "completions/auto-tlp.fish", dest = "/usr/share/fish/vendor_completions.d/auto-tlp.fish", mode = "644" },
+  { source = "LICENSE", dest = "/usr/share/licenses/auto-tlp/LICENSE", mode = "644" },
+  { source = "README.md", dest = "/usr/share/doc/auto-tlp/README.md", mode = "644", doc = true },
+]
+
+[package.metadata.generate-rpm.requires]
+tlp = "*"

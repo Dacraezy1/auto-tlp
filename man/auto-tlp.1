@@ -1,0 +1,83 @@
+.\" SPDX-License-Identifier: GPL-3.0-or-later
+.TH AUTO-TLP 1 "2026" "auto-tlp" "User Commands"
+.SH NAME
+auto-tlp \- generate a hardware-specific TLP configuration
+.SH SYNOPSIS
+.B auto-tlp
+[\fIOPTIONS\fR]
+.SH DESCRIPTION
+.B auto-tlp
+scans the machine it runs on (CPU and its frequency scaling driver, batteries,
+NVMe/SATA/HDD storage, GPUs, PCIe, Wi-Fi/Ethernet/Bluetooth, USB, audio and
+more) by reading
+.IR /sys ,
+.I /proc
+and DMI data, and prints a TLP configuration that contains only the settings
+the detected hardware actually supports.
+.PP
+Scanning is strictly read-only. Nothing is written unless
+.B \-\-output
+or
+.B \-\-install
+is given.
+.SH OPTIONS
+.TP
+.BR \-p ", " \-\-profile " " \fINAME\fR
+Tuning profile: \fBbalanced\fR (default), \fBperformance\fR or \fBbattery\fR.
+.TP
+.BI \-\-start\-thresh " N"
+Battery start-charge threshold, 0-99. Overrides the profile default.
+.TP
+.BI \-\-stop\-thresh " N"
+Battery stop-charge threshold, 1-100. Overrides the profile default.
+.TP
+.BR \-o ", " \-\-output " " \fIFILE\fR
+Write the configuration to \fIFILE\fR instead of standard output.
+.TP
+.B \-\-install
+Write the configuration to \fI/etc/tlp.d/99-auto-tlp.conf\fR (requires root).
+An existing file is backed up to \fI99-auto-tlp.conf.bak\fR.
+.TP
+.BR \-r ", " \-\-report
+Print the detected hardware report instead of a configuration.
+.TP
+.BR \-v ", " \-\-verbose
+With \fB\-\-report\fR, also list every PCI and USB device, sensors and the kernel command line.
+.TP
+.B \-\-terse
+Omit explanatory comments from the generated configuration.
+.TP
+.BR \-h ", " \-\-help
+Show usage.
+.TP
+.BR \-V ", " \-\-version
+Show the version.
+.SH PROFILES
+.TP
+.B balanced
+TLP-like defaults: turbo off on battery, 75-80% charge limit.
+.TP
+.B performance
+Turbo stays on in battery mode, performance-leaning EPP, no charge limit.
+.TP
+.B battery
+Maximum runtime and longevity: lower CPU cap on battery, 40-80% charge limit,
+aggressive PCIe power saving.
+.SH FILES
+.TP
+.I /etc/tlp.d/99-auto-tlp.conf
+Drop-in written by \fB\-\-install\fR. Settings that are active in
+\fI/etc/tlp.conf\fR take precedence over drop-ins.
+.SH EXIT STATUS
+.B 0
+on success,
+.B 2
+on invalid usage or when a file cannot be written.
+.SH SEE ALSO
+.BR tlp (8),
+.BR tlp\-stat (8),
+.BR tlp.conf (5)
+.SH AUTHOR
+Dacraezy1 and contributors. https://github.com/Dacraezy1/auto-tlp
+.SH LICENSE
+GPL-3.0-or-later

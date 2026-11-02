@@ -1,0 +1,8 @@
+/target
+/dist
+/dist-arch
+/result
+*.pkg.tar.zst
+*.AppImage
+.vscode/
+.idea/

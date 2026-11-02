@@ -1,0 +1,4 @@
+#!/bin/sh
+# SPDX-License-Identifier: GPL-3.0-or-later
+HERE="$(dirname "$(readlink -f "$0")")"
+exec "$HERE/usr/bin/auto-tlp" "$@"

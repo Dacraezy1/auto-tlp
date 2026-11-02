@@ -1,0 +1,21 @@
+# Template file for 'auto-tlp' (copy to srcpkgs/auto-tlp/template in void-packages)
+pkgname=auto-tlp
+version=0.1.0
+revision=1
+build_style=cargo
+short_desc="Scans your hardware and generates a tailored TLP configuration"
+maintainer="Dacraezy1 <dacraezy1@users.noreply.github.com>"
+license="GPL-3.0-or-later"
+homepage="https://github.com/Dacraezy1/auto-tlp"
+distfiles="${homepage}/archive/v${version}.tar.gz"
+# Refresh with: xgensum -i auto-tlp   (after the v${version} tag exists)
+checksum=0000000000000000000000000000000000000000000000000000000000000000
+depends="tlp"
+
+post_install() {
+	vman man/auto-tlp.1
+	vcompletion completions/auto-tlp.bash bash auto-tlp
+	vcompletion completions/_auto-tlp zsh auto-tlp
+	vcompletion completions/auto-tlp.fish fish auto-tlp
+	vlicense LICENSE
+}

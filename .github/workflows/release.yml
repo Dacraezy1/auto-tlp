@@ -1,0 +1,135 @@
+name: Release
+
+# Push a tag like v0.1.0 to publish a release:
+#   git tag v0.1.0 && git push origin v0.1.0
+# "Run workflow" (manual) builds everything and uploads it as workflow artifacts without publishing.
+on:
+  push:
+    tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  ci:
+    name: Full CI
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: Build ${{ matrix.target }}
+    needs: ci
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { runner: ubuntu-latest,    target: x86_64-unknown-linux-musl }
+          - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Tag must match Cargo.toml version
+        if: startsWith(github.ref, 'refs/tags/v')
+        run: |
+          CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
+          TAG="${GITHUB_REF_NAME#v}"
+          if [ "$CARGO_VERSION" != "$TAG" ]; then
+            echo "::error::tag v$TAG does not match Cargo.toml version $CARGO_VERSION (run scripts/bump-version.sh)"
+            exit 1
+          fi
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: ./.github/actions/setup-packaging-tools
+
+      - name: Build tar.gz, deb, rpm and AppImage
+        run: scripts/build-dist.sh ${{ matrix.target }} dist
+
+      - name: Binary must be fully static
+        run: |
+          tar -xzf dist/*-linux.tar.gz -C /tmp
+          ldd /tmp/auto-tlp-*-linux/auto-tlp 2>&1 | grep -qE 'not a dynamic executable|statically linked'
+
+      - name: Install packages in clean containers (native architecture)
+        run: scripts/smoke-test-packages.sh dist
+
+      - name: Run the AppImage
+        run: |
+          chmod +x dist/*.AppImage
+          APPIMAGE_EXTRACT_AND_RUN=1 dist/*.AppImage --version
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  arch:
+    name: Build Arch package
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir -p dist-arch
+          docker run --rm -v "$PWD:/src:ro" -v "$PWD/dist-arch:/out" archlinux:base-devel /src/scripts/build-arch-pkg.sh /out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-arch
+          path: dist-arch/*.pkg.tar.zst
+          if-no-files-found: error
+
+  publish:
+    name: Publish GitHub release
+    needs: [build, arch]
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dist-*
+          merge-multiple: true
+          path: dist
+      - name: Source tarball, checksums
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          git archive --format=tar.gz --prefix="auto-tlp-$VERSION/" -o "dist/auto-tlp-$VERSION-src.tar.gz" HEAD
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          cat SHA256SUMS
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          body: |
+            ## Install
+
+            | Distro | How |
+            |---|---|
+            | Any Linux (x86_64 / aarch64) | `curl -fsSL https://raw.githubusercontent.com/Dacraezy1/auto-tlp/main/scripts/install.sh \| sh` |
+            | Debian, Ubuntu, Mint, Pop!_OS | `sudo apt install ./auto-tlp_*_amd64.deb` |
+            | Fedora, RHEL, openSUSE | `sudo dnf install ./auto-tlp-*.rpm` |
+            | Arch, Manjaro, EndeavourOS | `sudo pacman -U auto-tlp-*.pkg.tar.zst` |
+            | Anything else | download the AppImage or the static `.tar.gz` |
+
+            Verify downloads with `sha256sum -c --ignore-missing SHA256SUMS`.

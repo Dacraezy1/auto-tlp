@@ -1,0 +1,13 @@
+#compdef auto-tlp
+# SPDX-License-Identifier: GPL-3.0-or-later
+_arguments \
+  '(-p --profile)'{-p,--profile}'[tuning profile]:profile:(balanced performance battery)' \
+  '--start-thresh[battery start-charge threshold (0-99)]:percent:' \
+  '--stop-thresh[battery stop-charge threshold (1-100)]:percent:' \
+  '(-o --output)'{-o,--output}'[write config to FILE]:file:_files' \
+  '--install[write /etc/tlp.d/99-auto-tlp.conf (needs root)]' \
+  '(-r --report)'{-r,--report}'[print the detected hardware report]' \
+  '(-v --verbose)'{-v,--verbose}'[with --report: list all PCI/USB devices]' \
+  '--terse[omit explanatory comments]' \
+  '(-h --help)'{-h,--help}'[show help]' \
+  '(-V --version)'{-V,--version}'[show version]'

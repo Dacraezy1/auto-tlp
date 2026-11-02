@@ -1,0 +1,176 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_call:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    name: Lint (rustfmt + clippy)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.75.0
+        with:
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets --locked -- -D warnings
+
+  shellcheck:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: shellcheck -S warning scripts/*.sh completions/auto-tlp.bash packaging/appimage/AppRun
+
+  test:
+    name: Test (${{ matrix.os }}, Rust ${{ matrix.rust }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, ubuntu-24.04-arm]
+        rust: [stable, "1.75.0"]   # 1.75.0 is the minimum supported Rust version
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --locked
+      - run: cargo test --locked --all-targets
+      - name: Smoke test on the runner's real hardware
+        run: |
+          cargo run --locked -q -- --report --verbose
+          for p in balanced performance battery; do
+            cargo run --locked -q -- --profile "$p" > "config-$p.conf"
+            grep -q '^TLP_ENABLE="1"' "config-$p.conf"
+          done
+          cat config-balanced.conf
+
+  static-musl:
+    name: Static musl build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - run: cargo build --release --locked --target x86_64-unknown-linux-musl
+      - name: Binary must be fully static
+        run: |
+          BIN=target/x86_64-unknown-linux-musl/release/auto-tlp
+          ldd "$BIN" 2>&1 | grep -qE 'not a dynamic executable|statically linked'
+          "$BIN" --version
+          ls -lh "$BIN"
+
+  tlp-compat:
+    name: Config accepted by real TLP
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y tlp
+      - run: cargo build --release --locked
+      - name: Every emitted key must exist in the installed TLP
+        run: scripts/validate-keys.sh target/release/auto-tlp
+      - name: Install the generated drop-in and let TLP read it
+        run: |
+          sudo ./target/release/auto-tlp --install
+          sudo tlp-stat -c | tee tlp-stat.txt
+          grep -q '/etc/tlp.d/99-auto-tlp.conf' tlp-stat.txt
+      - name: Version detection finds TLP
+        run: |
+          ./target/release/auto-tlp --report | grep -E '^TLP: [0-9]+\.[0-9]+'
+
+  tlp-upstream:
+    name: Keys still valid in upstream TLP (informational)
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo build --release --locked
+      - name: Compare against upstream TLP's documented keys
+        run: |
+          curl -fsSL -o upstream-tlp.conf https://raw.githubusercontent.com/linrunner/TLP/main/tlp.conf.in
+          TLP_KEY_FILES=upstream-tlp.conf scripts/validate-keys.sh target/release/auto-tlp
+
+  packages:
+    name: Packages (deb, rpm, AppImage, tar.gz) + install tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-musl
+      - uses: Swatinem/rust-cache@v2
+      - run: sudo apt-get update && sudo apt-get install -y musl-tools
+      - uses: ./.github/actions/setup-packaging-tools
+      - name: Build all package formats
+        run: scripts/build-dist.sh x86_64-unknown-linux-musl dist
+      - name: Install every package in clean containers
+        run: scripts/smoke-test-packages.sh dist
+      - name: Run the AppImage
+        run: |
+          chmod +x dist/*.AppImage
+          APPIMAGE_EXTRACT_AND_RUN=1 dist/*.AppImage --version
+          APPIMAGE_EXTRACT_AND_RUN=1 dist/*.AppImage --terse | grep -q '^TLP_ENABLE='
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-packages
+          path: dist/*
+          retention-days: 7
+
+  arch-pkgbuild:
+    name: Arch Linux PKGBUILD (makepkg)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          mkdir -p dist-arch
+          docker run --rm -v "$PWD:/src:ro" -v "$PWD/dist-arch:/out" archlinux:base-devel /src/scripts/build-arch-pkg.sh /out
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ci-arch-package
+          path: dist-arch/*.pkg.tar.zst
+          retention-days: 7
+
+  distro-builds:
+    name: Build from source on ${{ matrix.image }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ["ubuntu:24.04", "fedora:latest", "alpine:latest", "opensuse/tumbleweed", "archlinux:base-devel"]
+    steps:
+      - uses: actions/checkout@v4
+      - run: docker run --rm -v "$PWD:/src:ro" -w /src ${{ matrix.image }} sh scripts/distro-build-test.sh
+
+  nix:
+    name: Nix build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: cachix/install-nix-action@v31
+      - run: nix build .#auto-tlp -L
+      - run: ./result/bin/auto-tlp --version
+      - run: nix develop -c cargo --version

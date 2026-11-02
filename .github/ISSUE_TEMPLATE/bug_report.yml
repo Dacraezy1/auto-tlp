@@ -1,0 +1,36 @@
+name: Bug report
+description: The generated config is wrong, a device was misdetected, or something crashed.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve auto-tlp! Misdetections are the most useful reports - they make it work on more laptops.
+  - type: textarea
+    id: report
+    attributes:
+      label: Hardware report
+      description: Output of `auto-tlp --report --verbose`
+      render: text
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: What went wrong?
+      description: Which setting / device is wrong, and what did you expect instead?
+    validations:
+      required: true
+  - type: textarea
+    id: config
+    attributes:
+      label: Generated config (optional)
+      description: Output of `auto-tlp` if relevant.
+      render: ini
+  - type: input
+    id: versions
+    attributes:
+      label: Versions
+      description: Output of `auto-tlp --version` and `tlp --version`, plus your distro.
+    validations:
+      required: true

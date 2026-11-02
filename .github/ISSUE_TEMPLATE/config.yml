@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: TLP documentation
+    url: https://linrunner.de/tlp/settings/
+    about: Questions about what a TLP setting does are best answered by the TLP docs.

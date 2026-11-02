@@ -1,0 +1,24 @@
+# Maintainer: Dacraezy1 <dacraezy1@users.noreply.github.com>
+pkgname=auto-tlp
+pkgver=0.1.0
+pkgrel=0
+pkgdesc="Scans your hardware and generates a clean, tailored TLP configuration"
+url="https://github.com/Dacraezy1/auto-tlp"
+arch="x86_64 aarch64"
+license="GPL-3.0-or-later"
+depends="tlp"
+makedepends="cargo make"
+subpackages="$pkgname-doc $pkgname-bash-completion $pkgname-zsh-completion $pkgname-fish-completion"
+source="$pkgname-$pkgver.tar.gz::$url/archive/v$pkgver.tar.gz"
+options="!check"  # the test-suite reads /sys, which abuild's sandbox may hide
+
+build() {
+	cargo build --release --locked
+}
+
+package() {
+	make DESTDIR="$pkgdir" PREFIX=/usr BIN=target/release/auto-tlp install
+}
+
+# Refresh with: abuild checksum   (after the v$pkgver tag exists)
+sha512sums="SKIP"

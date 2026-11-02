@@ -1,0 +1,11 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+complete -c auto-tlp -s p -l profile -x -a 'balanced performance battery' -d 'Tuning profile'
+complete -c auto-tlp -l start-thresh -x -d 'Battery start-charge threshold (0-99)'
+complete -c auto-tlp -l stop-thresh -x -d 'Battery stop-charge threshold (1-100)'
+complete -c auto-tlp -s o -l output -r -F -d 'Write config to FILE'
+complete -c auto-tlp -l install -d 'Write /etc/tlp.d/99-auto-tlp.conf (needs root)'
+complete -c auto-tlp -s r -l report -d 'Print the detected hardware report'
+complete -c auto-tlp -s v -l verbose -d 'With --report: list all PCI/USB devices'
+complete -c auto-tlp -l terse -d 'Omit explanatory comments'
+complete -c auto-tlp -s h -l help -d 'Show help'
+complete -c auto-tlp -s V -l version -d 'Show version'

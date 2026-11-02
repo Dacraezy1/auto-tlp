@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=auto-tlp
+GenericName=TLP configuration generator
+Comment=Scan your hardware and generate a tailored TLP configuration
+Exec=auto-tlp
+Icon=auto-tlp
+Terminal=true
+Categories=System;ConsoleOnly;

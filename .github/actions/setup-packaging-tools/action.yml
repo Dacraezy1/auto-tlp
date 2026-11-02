@@ -1,0 +1,20 @@
+name: Set up packaging tools
+description: Installs cargo-deb and cargo-generate-rpm at pinned versions (cached).
+runs:
+  using: composite
+  steps:
+    - name: Cache packaging tools
+      id: cache
+      uses: actions/cache@v4
+      with:
+        path: ~/.cargo/pkg-tools
+        key: pkg-tools-${{ runner.os }}-${{ runner.arch }}-deb2.12.1-rpm0.14.1
+    - name: Install cargo-deb and cargo-generate-rpm
+      if: steps.cache.outputs.cache-hit != 'true'
+      shell: bash
+      run: |
+        cargo install cargo-deb --version 2.12.1 --locked --root ~/.cargo/pkg-tools
+        cargo install cargo-generate-rpm --version 0.14.1 --locked --root ~/.cargo/pkg-tools
+    - name: Add tools to PATH
+      shell: bash
+      run: echo "$HOME/.cargo/pkg-tools/bin" >> "$GITHUB_PATH"
