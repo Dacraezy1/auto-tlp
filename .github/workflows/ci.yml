@@ -139,7 +139,7 @@ jobs:
           chmod +x "$APPIMAGE"
           "$APPIMAGE" --version
           "$APPIMAGE" --terse | grep -q '^TLP_ENABLE='
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ci-packages
           path: dist/*
@@ -153,7 +153,7 @@ jobs:
       - run: |
           mkdir -p dist-arch
           docker run --rm -v "$PWD:/src:ro" -v "$PWD/dist-arch:/out" archlinux:base-devel /src/scripts/build-arch-pkg.sh /out
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: ci-arch-package
           path: dist-arch/*.pkg.tar.zst
