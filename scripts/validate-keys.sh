@@ -11,7 +11,9 @@ BIN="${1:-target/release/auto-tlp}"
 TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
-extract() { grep -hoE '^#?[[:space:]]*[A-Z][A-Z0-9_]+=' "$@" 2>/dev/null | tr -d '# =' | sort -u; }
+# Missing files are fine (e.g. TLP not installed, only an upstream tlp.conf supplied): grep -s hides
+# the error and `|| true` keeps `set -o pipefail` from aborting the script.
+extract() { { grep -hsoE '^#?[[:space:]]*[A-Z][A-Z0-9_]+=' "$@" || true; } | tr -d '# =' | sort -u; }
 
 # shellcheck disable=SC2086
 extract /etc/tlp.conf /usr/share/tlp/defaults.conf ${TLP_KEY_FILES:-} > "$TMP/known"
@@ -21,15 +23,23 @@ if [ ! -s "$TMP/known" ]; then
 fi
 echo "known TLP keys: $(wc -l < "$TMP/known")"
 
+# AUTO_TLP_EXTRA lets CI force a TLP version, e.g. AUTO_TLP_EXTRA="--tlp-version 1.11".
+# "--demo" checks a full-featured sample laptop, because a CI runner has too little hardware
+# (no battery, no GPU, no cpufreq) to exercise most of the keys.
 status=0
-for profile in balanced performance battery; do
-  "$BIN" --profile "$profile" 2>/dev/null | grep -oE '^#?[A-Z][A-Z0-9_]+=' | tr -d '#=' | sort -u > "$TMP/ours"
-  unknown="$(comm -23 "$TMP/ours" "$TMP/known" | tr '\n' ' ')"
-  if [ -n "$unknown" ]; then
-    echo "::error::profile '$profile' emits keys unknown to this TLP: $unknown"
-    status=1
-  else
-    echo "profile '$profile': all $(wc -l < "$TMP/ours") keys are valid"
-  fi
+for mode in "" "--demo"; do
+  for profile in balanced performance battery; do
+    # shellcheck disable=SC2086
+    "$BIN" $mode --profile "$profile" ${AUTO_TLP_EXTRA:-} 2>/dev/null \
+      | grep -oE '^#?[A-Z][A-Z0-9_]+=' | tr -d '#=' | sort -u > "$TMP/ours"
+    unknown="$(comm -23 "$TMP/ours" "$TMP/known" | tr '\n' ' ')"
+    label="${mode:-host scan} / $profile"
+    if [ -n "$unknown" ]; then
+      echo "::error::[$label] emits keys unknown to this TLP: $unknown"
+      status=1
+    else
+      echo "[$label] all $(wc -l < "$TMP/ours") keys are valid"
+    fi
+  done
 done
 exit "$status"

@@ -4,8 +4,11 @@
 # Run inside a container with the repo mounted at /src:
 #   docker run --rm -v "$PWD:/src" -w /src fedora:latest sh scripts/distro-build-test.sh
 set -eu
-# shellcheck disable=SC1091
-. /etc/os-release
+# shellcheck disable=SC1090,SC1091
+. "${OS_RELEASE_FILE:-/etc/os-release}"
+# Fedora, Arch and Alpine do not define ID_LIKE; with `set -u` that would abort the script.
+ID="${ID:-unknown}"
+ID_LIKE="${ID_LIKE:-}"
 echo "==> ${PRETTY_NAME:-$ID}"
 case "$ID $ID_LIKE" in
   *alpine*)   apk add --no-cache cargo gcc musl-dev ;;

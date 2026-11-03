@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dacraezy1
+mod demo;
 mod gen;
 mod hw;
 mod report;
@@ -28,6 +29,9 @@ OPTIONS:
     -r, --report             only print the detected hardware report
     -v, --verbose            with --report: also list all PCI/USB devices and sensors
         --terse              omit explanatory comments from the config
+        --tlp-version <X.Y>  generate for this TLP version instead of the installed one
+                             (>= 1.11 uses the new _ON_PRF/_ON_BAL/_ON_SAV key names)
+        --demo               use a built-in sample laptop instead of scanning this machine
     -h, --help               show this help
     -V, --version            show version"
     );
@@ -38,11 +42,22 @@ fn die(msg: &str) -> ! {
     exit(2);
 }
 
+/// "1.11" or "1.11.0" -> (1, 11, "1.11.0")
+fn parse_tlp_version(v: &str) -> (u32, u32, String) {
+    let mut it = v.split('.');
+    let num = |x: Option<&str>| x.and_then(|t| t.parse::<u32>().ok());
+    match (num(it.next()), num(it.next())) {
+        (Some(maj), Some(min)) => (maj, min, v.to_string()),
+        _ => die("--tlp-version must look like 1.11 or 1.11.0"),
+    }
+}
+
 fn main() {
     let mut profile = Profile::Balanced;
     let (mut start, mut stop) = (None, None);
     let (mut output, mut install, mut report, mut verbose, mut terse) =
         (None, false, false, false, false);
+    let (mut demo, mut tlp_version) = (false, None);
 
     let mut args = std::env::args().skip(1);
     while let Some(a) = args.next() {
@@ -81,6 +96,8 @@ fn main() {
             "-r" | "--report" => report = true,
             "-v" | "--verbose" => verbose = true,
             "--terse" => terse = true,
+            "--demo" => demo = true,
+            "--tlp-version" => tlp_version = Some(parse_tlp_version(&val(&a))),
             other => {
                 usage();
                 die(&format!("unknown option '{}'", other));
@@ -88,11 +105,27 @@ fn main() {
         }
     }
 
-    if !std::path::Path::new("/sys").exists() {
+    if !demo && !std::path::Path::new("/sys").exists() {
         die("this tool needs Linux (/sys not found)");
     }
 
-    let hw = hw::detect();
+    if demo && install {
+        die("--demo uses a made-up machine and cannot be combined with --install");
+    }
+    let mut hw = hw::detect();
+    if demo {
+        // Keep the real TLP detection (so output matches the TLP you have), fake everything else.
+        let tlp = std::mem::take(&mut hw.tlp);
+        hw = demo::thinkpad();
+        if tlp.installed {
+            hw.tlp = tlp;
+        }
+    }
+    if let Some((maj, min, text)) = tlp_version {
+        hw.tlp.installed = true;
+        hw.tlp.version = Some((maj, min));
+        hw.tlp.version_str = Some(text);
+    }
     if report {
         report::print(&hw, verbose);
         return;

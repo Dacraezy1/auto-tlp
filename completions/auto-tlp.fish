@@ -7,5 +7,7 @@ complete -c auto-tlp -l install -d 'Write /etc/tlp.d/99-auto-tlp.conf (needs roo
 complete -c auto-tlp -s r -l report -d 'Print the detected hardware report'
 complete -c auto-tlp -s v -l verbose -d 'With --report: list all PCI/USB devices'
 complete -c auto-tlp -l terse -d 'Omit explanatory comments'
+complete -c auto-tlp -l tlp-version -x -d 'Generate for this TLP version (>=1.11 = new key names)'
+complete -c auto-tlp -l demo -d 'Use a built-in sample laptop instead of scanning'
 complete -c auto-tlp -s h -l help -d 'Show help'
 complete -c auto-tlp -s V -l version -d 'Show version'

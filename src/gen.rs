@@ -78,6 +78,7 @@ impl Profile {
     }
 }
 
+#[derive(Clone, Copy)]
 struct PV {
     epp_ac: &'static str,
     epp_bat: &'static str,
@@ -106,9 +107,50 @@ pub struct Generated {
     pub warnings: Vec<String>,
 }
 
+/// Key naming scheme. TLP 1.11 renamed every `*_ON_AC` / `*_ON_BAT` setting to `*_ON_PRF` / `*_ON_BAL`
+/// and added a power-saver profile (`*_ON_SAV`). Old names keep working in new TLP (converted at runtime),
+/// but new names do NOT work in old TLP, so the legacy names are used unless TLP >= 1.11 is known.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Scheme {
+    Legacy,
+    Profiles,
+}
+
+/// Settings that have a power-saver (`_ON_SAV`) variant in TLP 1.11 (taken from upstream's tlp.conf).
+const SAV_KEYS: &[&str] = &[
+    "CPU_DRIVER_OPMODE",
+    "CPU_SCALING_GOVERNOR",
+    "CPU_SCALING_MIN_FREQ",
+    "CPU_SCALING_MAX_FREQ",
+    "CPU_ENERGY_PERF_POLICY",
+    "CPU_MIN_PERF",
+    "CPU_MAX_PERF",
+    "CPU_BOOST",
+    "CPU_HWP_DYN_BOOST",
+    "PLATFORM_PROFILE",
+    "MEM_SLEEP",
+    "DISK_APM_LEVEL",
+    "DISK_SPINDOWN_TIMEOUT",
+    "SATA_LINKPWR",
+    "AHCI_RUNTIME_PM",
+    "INTEL_GPU_POWER_PROFILE",
+    "INTEL_GPU_MIN_FREQ",
+    "INTEL_GPU_MAX_FREQ",
+    "INTEL_GPU_BOOST_FREQ",
+    "RADEON_DPM_PERF_LEVEL",
+    "AMDGPU_ABM_LEVEL",
+    "WIFI_PWR",
+    "SOUND_POWER_SAVE",
+    "PCIE_ASPM",
+    "RUNTIME_PM",
+];
+
 struct W {
     s: String,
     terse: bool,
+    scheme: Scheme,
+    /// Values for TLP's power-saver profile (always the aggressive "battery" tuning).
+    sv: PV,
 }
 
 impl W {
@@ -135,6 +177,50 @@ impl W {
     fn ckv(&mut self, k: &str, v: &str) {
         self.raw(&format!("#{}=\"{}\"", k, v));
     }
+
+    fn put(&mut self, commented: bool, k: &str, v: &str) {
+        if commented {
+            self.ckv(k, v)
+        } else {
+            self.kv(k, v)
+        }
+    }
+
+    /// Emit a setting that differs by power source: `ac` = plugged in, `bat` = on battery,
+    /// `sav` = TLP's power-saver profile (only written for TLP >= 1.11, and only for keys that have one).
+    fn dual_impl(&mut self, commented: bool, base: &str, ac: Option<&str>, bat: &str, sav: &str) {
+        match self.scheme {
+            Scheme::Legacy => {
+                if let Some(a) = ac {
+                    self.put(commented, &format!("{base}_ON_AC"), a);
+                }
+                self.put(commented, &format!("{base}_ON_BAT"), bat);
+            }
+            Scheme::Profiles => {
+                if let Some(a) = ac {
+                    self.put(commented, &format!("{base}_ON_PRF"), a);
+                }
+                self.put(commented, &format!("{base}_ON_BAL"), bat);
+                if SAV_KEYS.contains(&base) {
+                    self.put(commented, &format!("{base}_ON_SAV"), sav);
+                }
+            }
+        }
+    }
+    fn dual(&mut self, base: &str, ac: &str, bat: &str, sav: &str) {
+        self.dual_impl(false, base, Some(ac), bat, sav);
+    }
+    fn dual_c(&mut self, base: &str, ac: &str, bat: &str, sav: &str) {
+        self.dual_impl(true, base, Some(ac), bat, sav);
+    }
+}
+
+fn flag(on: bool) -> &'static str {
+    if on {
+        "1"
+    } else {
+        "0"
+    }
 }
 
 fn pick(choices: &[String], prefs: &[&str]) -> Option<String> {
@@ -149,6 +235,12 @@ pub fn generate(hw: &Hardware, o: &Options) -> Generated {
     let mut w = W {
         s: String::new(),
         terse: o.terse,
+        scheme: if hw.tlp.uses_profiles() {
+            Scheme::Profiles
+        } else {
+            Scheme::Legacy
+        },
+        sv: Profile::Battery.vals(),
     };
     let mut warn: Vec<String> = Vec::new();
 
@@ -185,6 +277,11 @@ fn header(w: &mut W, hw: &Hardware, o: &Options) {
         p.vendor, p.product, p.chassis
     ));
     w.raw(&format!("# CPU       : {}", hw.cpu.model));
+    w.raw(&match (&hw.tlp.version_str, hw.tlp.uses_profiles()) {
+        (Some(v), true) => format!("# TLP       : {v} (profile-style keys: _ON_PRF / _ON_BAL / _ON_SAV)"),
+        (Some(v), false) => format!("# TLP       : {v} (classic keys: _ON_AC / _ON_BAT)"),
+        (None, _) => "# TLP       : version unknown, using classic _ON_AC / _ON_BAT keys (understood by every TLP version)".to_string(),
+    });
     for g in &hw.gpus {
         w.raw(&format!(
             "# GPU       : {} [{}, driver: {}]",
@@ -212,13 +309,18 @@ fn header(w: &mut W, hw: &Hardware, o: &Options) {
 fn general(w: &mut W, hw: &Hardware, warn: &mut Vec<String>) {
     w.section("General");
     w.kv("TLP_ENABLE", "1");
-    if hw.is_laptop() {
-        w.kv("TLP_DEFAULT_MODE", "AC");
-        w.kv("TLP_PERSISTENT_DEFAULT", "0");
-    } else {
-        w.info("No battery detected: pin TLP to the AC profile permanently.");
-        w.kv("TLP_DEFAULT_MODE", "AC");
-        w.kv("TLP_PERSISTENT_DEFAULT", "1");
+    if !hw.is_laptop() {
+        w.info("No battery detected: pin TLP to the AC/performance profile permanently.");
+        match w.scheme {
+            Scheme::Legacy => {
+                w.kv("TLP_DEFAULT_MODE", "AC");
+                w.kv("TLP_PERSISTENT_DEFAULT", "1");
+            }
+            Scheme::Profiles => {
+                w.kv("TLP_AUTO_SWITCH", "0");
+                w.kv("TLP_PROFILE_DEFAULT", "PRF");
+            }
+        }
         warn.push("No battery found (desktop?). TLP is pinned to AC mode; most battery tuning is irrelevant here.".into());
     }
 }
@@ -247,8 +349,7 @@ fn cpu(w: &mut W, hw: &Hardware, pv: &PV, o_warn: &mut Vec<String>) {
     if let Some(st) = &c.amd_pstate {
         if hw.tlp.at_least(1, 5) && ["active", "guided", "passive"].contains(&st.as_str()) {
             w.info("amd-pstate operation mode is kept as currently running.");
-            w.kv("CPU_DRIVER_OPMODE_ON_AC", st);
-            w.kv("CPU_DRIVER_OPMODE_ON_BAT", st);
+            w.dual("CPU_DRIVER_OPMODE", st, st, st);
         }
     }
 
@@ -280,9 +381,16 @@ fn cpu(w: &mut W, hw: &Hardware, pv: &PV, o_warn: &mut Vec<String>) {
                 ),
             )
         };
+        let sav = if dynamic_gov {
+            pick(
+                &c.governors,
+                &["schedutil", "conservative", "ondemand", "powersave"],
+            )
+        } else {
+            pick(&c.governors, &["powersave"])
+        };
         if let (Some(a), Some(b)) = (ac, bat) {
-            w.kv("CPU_SCALING_GOVERNOR_ON_AC", &a);
-            w.kv("CPU_SCALING_GOVERNOR_ON_BAT", &b);
+            w.dual("CPU_SCALING_GOVERNOR", &a, &b, sav.as_deref().unwrap_or(&b));
         }
     }
 
@@ -299,42 +407,61 @@ fn cpu(w: &mut W, hw: &Hardware, pv: &PV, o_warn: &mut Vec<String>) {
         } else {
             "default"
         };
+        let sav = if valid(w.sv.epp_bat) {
+            w.sv.epp_bat
+        } else {
+            "default"
+        };
         w.info(if has_epp {
             "Energy/performance preference (EPP) is supported by the driver."
         } else {
             "No EPP; using the legacy energy_perf_bias (EPB) interface."
         });
-        w.kv("CPU_ENERGY_PERF_POLICY_ON_AC", ac);
-        w.kv("CPU_ENERGY_PERF_POLICY_ON_BAT", bat);
+        w.dual("CPU_ENERGY_PERF_POLICY", ac, bat, sav);
     }
 
     // Turbo / boost
     if let Some(k) = &c.boost_knob {
         w.info(&format!("Turbo/boost control found ({}).", k));
-        w.kv("CPU_BOOST_ON_AC", "1");
-        w.kv("CPU_BOOST_ON_BAT", if pv.boost_bat { "1" } else { "0" });
+        w.dual("CPU_BOOST", "1", flag(pv.boost_bat), flag(w.sv.boost_bat));
     }
     if c.hwp_dyn_boost {
-        w.kv("CPU_HWP_DYN_BOOST_ON_AC", "1");
-        w.kv(
-            "CPU_HWP_DYN_BOOST_ON_BAT",
-            if pv.boost_bat { "1" } else { "0" },
+        w.dual(
+            "CPU_HWP_DYN_BOOST",
+            "1",
+            flag(pv.boost_bat),
+            flag(w.sv.boost_bat),
         );
     }
 
     // Performance caps
     if c.intel_perf_pct {
-        w.kv("CPU_MIN_PERF_ON_AC", "0");
-        w.kv("CPU_MAX_PERF_ON_AC", "100");
-        w.kv("CPU_MIN_PERF_ON_BAT", "0");
-        w.kv("CPU_MAX_PERF_ON_BAT", &pv.max_perf_bat.to_string());
-    } else if pv.max_perf_bat < 100 {
-        if let Some(max) = c.max_khz {
-            let cap = (max * pv.max_perf_bat as u64 / 100) / 1000 * 1000;
-            w.info(
-                "No intel_pstate percentage knob; capping max frequency (kHz) on battery instead.",
-            );
-            w.kv("CPU_SCALING_MAX_FREQ_ON_BAT", &cap.to_string());
+        w.dual("CPU_MIN_PERF", "0", "0", "0");
+        w.dual(
+            "CPU_MAX_PERF",
+            "100",
+            &pv.max_perf_bat.to_string(),
+            &w.sv.max_perf_bat.to_string(),
+        );
+    } else if let Some(max) = c.max_khz {
+        // No intel_pstate percentage knob: cap the maximum frequency (kHz) instead.
+        let cap = |pct: u8| ((max * pct as u64 / 100) / 1000 * 1000).to_string();
+        let sav_pct = w.sv.max_perf_bat;
+        match w.scheme {
+            Scheme::Legacy if pv.max_perf_bat < 100 => {
+                w.info("No intel_pstate percentage knob; capping max frequency (kHz) on battery instead.");
+                w.kv("CPU_SCALING_MAX_FREQ_ON_BAT", &cap(pv.max_perf_bat));
+            }
+            Scheme::Profiles => {
+                if pv.max_perf_bat < 100 {
+                    w.kv("CPU_SCALING_MAX_FREQ_ON_BAL", &cap(pv.max_perf_bat));
+                }
+                if sav_pct < 100 {
+                    w.info("No intel_pstate percentage knob; capping max frequency (kHz) in the power-saver profile.");
+                    w.kv("CPU_SCALING_MAX_FREQ_ON_SAV", &cap(sav_pct));
+                }
+            }
+            Scheme::Legacy => {}
         }
     }
 
@@ -356,8 +483,8 @@ fn platform_profile(w: &mut W, hw: &Hardware, pv: &PV) {
     w.section("Platform profile (firmware performance/thermal mode)");
     w.info(&format!("Firmware offers: {}", ch.join(" ")));
     if let (Some(a), Some(b)) = (pick(ch, pv.pp_ac), pick(ch, pv.pp_bat)) {
-        w.kv("PLATFORM_PROFILE_ON_AC", &a);
-        w.kv("PLATFORM_PROFILE_ON_BAT", &b);
+        let sav = pick(ch, w.sv.pp_bat).unwrap_or_else(|| b.clone());
+        w.dual("PLATFORM_PROFILE", &a, &b, &sav);
     }
 }
 
@@ -380,12 +507,16 @@ fn graphics(w: &mut W, hw: &Hardware, profile: Profile, warn: &mut Vec<String>) 
                     } else {
                         rp0
                     };
-                    w.kv("INTEL_GPU_MIN_FREQ_ON_AC", &rpn.to_string());
-                    w.kv("INTEL_GPU_MIN_FREQ_ON_BAT", &rpn.to_string());
-                    w.kv("INTEL_GPU_MAX_FREQ_ON_AC", &rp0.to_string());
-                    w.kv("INTEL_GPU_MAX_FREQ_ON_BAT", &bat_max.to_string());
-                    w.kv("INTEL_GPU_BOOST_FREQ_ON_AC", &rp0.to_string());
-                    w.kv("INTEL_GPU_BOOST_FREQ_ON_BAT", &bat_max.to_string());
+                    let sav_max = rp1.unwrap_or(rp0);
+                    let (rpn, rp0, bat_max, sav_max) = (
+                        rpn.to_string(),
+                        rp0.to_string(),
+                        bat_max.to_string(),
+                        sav_max.to_string(),
+                    );
+                    w.dual("INTEL_GPU_MIN_FREQ", &rpn, &rpn, &rpn);
+                    w.dual("INTEL_GPU_MAX_FREQ", &rp0, &bat_max, &sav_max);
+                    w.dual("INTEL_GPU_BOOST_FREQ", &rp0, &bat_max, &sav_max);
                 }
             }
             (GpuVendor::Intel, Some("xe")) => {
@@ -399,12 +530,8 @@ fn graphics(w: &mut W, hw: &Hardware, profile: Profile, warn: &mut Vec<String>) 
                     "{} ({}): DPM performance level is controllable.",
                     g.name, d
                 ));
-                w.kv("RADEON_DPM_PERF_LEVEL_ON_AC", "auto");
-                w.kv("RADEON_DPM_PERF_LEVEL_ON_BAT", "auto");
-                if d == "radeon" && g.has_dpm_state && hw.tlp.at_least(1, 0) {
-                    w.kv("RADEON_DPM_STATE_ON_AC", "performance");
-                    w.kv("RADEON_DPM_STATE_ON_BAT", "battery");
-                }
+                // (RADEON_DPM_STATE_* was removed from TLP; the perf level works for radeon and amdgpu.)
+                w.dual("RADEON_DPM_PERF_LEVEL", "auto", "auto", "auto");
             }
             (GpuVendor::Nvidia, Some("nvidia")) => {
                 begin(w);
@@ -472,45 +599,28 @@ fn storage(w: &mut W, hw: &Hardware, pv: &PV, warn: &mut Vec<String>) {
             internal.iter().map(|d| f(d)).collect::<Vec<_>>().join(" ")
         };
         w.info("HDD detected: advanced power management + spindown (needs hdparm). 'keep' leaves non-HDDs untouched.");
-        w.kv(
-            "DISK_APM_LEVEL_ON_AC",
-            &join(&|d| {
+        let per_disk = |hdd: String| {
+            join(&|d| {
                 if d.rotational {
-                    "254".into()
+                    hdd.clone()
                 } else {
                     "keep".into()
                 }
-            }),
+            })
+        };
+        let (apm_bat, apm_sav) = (pv.hdd_apm_bat.to_string(), w.sv.hdd_apm_bat.to_string());
+        let (spin_bat, spin_sav) = (pv.hdd_spin_bat.to_string(), w.sv.hdd_spin_bat.to_string());
+        w.dual(
+            "DISK_APM_LEVEL",
+            &per_disk("254".into()),
+            &per_disk(apm_bat),
+            &per_disk(apm_sav),
         );
-        w.kv(
-            "DISK_APM_LEVEL_ON_BAT",
-            &join(&|d| {
-                if d.rotational {
-                    pv.hdd_apm_bat.to_string()
-                } else {
-                    "keep".into()
-                }
-            }),
-        );
-        w.kv(
-            "DISK_SPINDOWN_TIMEOUT_ON_AC",
-            &join(&|d| {
-                if d.rotational {
-                    "0".into()
-                } else {
-                    "keep".into()
-                }
-            }),
-        );
-        w.kv(
-            "DISK_SPINDOWN_TIMEOUT_ON_BAT",
-            &join(&|d| {
-                if d.rotational {
-                    pv.hdd_spin_bat.to_string()
-                } else {
-                    "keep".into()
-                }
-            }),
+        w.dual(
+            "DISK_SPINDOWN_TIMEOUT",
+            &per_disk("0".into()),
+            &per_disk(spin_bat),
+            &per_disk(spin_sav),
         );
         if !hw.tlp.has_hdparm {
             warn.push("A spinning disk is present but 'hdparm' is not installed; TLP cannot apply HDD power settings without it.".into());
@@ -526,15 +636,18 @@ fn storage(w: &mut W, hw: &Hardware, pv: &PV, warn: &mut Vec<String>) {
                 .any(|d| d.driver.as_deref().map_or(false, |x| x.contains("ahci"))))
     {
         w.info("SATA link power management policy is exposed by the kernel.");
-        w.kv("SATA_LINKPWR_ON_AC", "max_performance");
-        w.kv("SATA_LINKPWR_ON_BAT", pv.sata_bat);
+        w.dual(
+            "SATA_LINKPWR",
+            "max_performance",
+            pv.sata_bat,
+            w.sv.sata_bat,
+        );
     }
     if internal
         .iter()
         .any(|d| d.driver.as_deref().map_or(false, |x| x.contains("ahci")))
     {
-        w.kv("AHCI_RUNTIME_PM_ON_AC", "on");
-        w.kv("AHCI_RUNTIME_PM_ON_BAT", "auto");
+        w.dual("AHCI_RUNTIME_PM", "on", "auto", "auto");
         w.kv("AHCI_RUNTIME_PM_TIMEOUT", "15");
     }
 
@@ -551,8 +664,8 @@ fn pcie(w: &mut W, hw: &Hardware, pv: &PV, warn: &mut Vec<String>) {
         Some((choices, cur)) => {
             let bat = if choices.iter().any(|c| c == pv.aspm_bat) { pv.aspm_bat } else { "default" };
             w.info(&format!("PCIe ASPM policies available: {} (current: {}).", choices.join(" "), cur.as_deref().unwrap_or("?")));
-            w.kv("PCIE_ASPM_ON_AC", "default");
-            w.kv("PCIE_ASPM_ON_BAT", bat);
+            let sav = if choices.iter().any(|c| c == w.sv.aspm_bat) { w.sv.aspm_bat } else { "default" };
+            w.dual("PCIE_ASPM", "default", bat, sav);
         }
         None => warn.push("PCIe ASPM policy control is not available (disabled by firmware or kernel). PCIE_ASPM_* was left out.".into()),
     }
@@ -561,8 +674,7 @@ fn pcie(w: &mut W, hw: &Hardware, pv: &PV, warn: &mut Vec<String>) {
             "Kernel cmdline contains pcie_aspm=off, which prevents TLP from using ASPM.".into(),
         );
     }
-    w.kv("RUNTIME_PM_ON_AC", "on");
-    w.kv("RUNTIME_PM_ON_BAT", "auto");
+    w.dual("RUNTIME_PM", "on", "auto", "auto");
 
     let mut deny = vec!["mei_me", "nouveau", "radeon", "xhci_hcd"];
     let nvidia_off = hw
@@ -596,8 +708,7 @@ fn radios(w: &mut W, hw: &Hardware, pv: &PV, warn: &mut Vec<String>) {
             .map(|n| format!("{} ({})", n.name, n.driver.as_deref().unwrap_or("?")))
             .collect();
         w.info(&format!("Wi-Fi: {}", d.join(", ")));
-        w.kv("WIFI_PWR_ON_AC", "off");
-        w.kv("WIFI_PWR_ON_BAT", pv.wifi_bat);
+        w.dual("WIFI_PWR", "off", pv.wifi_bat, w.sv.wifi_bat);
         if !hw.tlp.has_iw {
             warn.push("Wi-Fi present but 'iw' is not installed; TLP cannot set Wi-Fi power saving without it.".into());
         }
@@ -620,7 +731,13 @@ fn radios(w: &mut W, hw: &Hardware, pv: &PV, warn: &mut Vec<String>) {
             dev.push("wwan");
         }
         w.info("Optional: switch radios off on battery while they are not connected/in use.");
-        w.ckv("DEVICES_TO_DISABLE_ON_BAT_NOT_IN_USE", &dev.join(" "));
+        match w.scheme {
+            Scheme::Legacy => w.ckv("DEVICES_TO_DISABLE_ON_BAT_NOT_IN_USE", &dev.join(" ")),
+            Scheme::Profiles => {
+                w.ckv("DEVICES_TO_DISABLE_ON_BAL_NOT_IN_USE", &dev.join(" "));
+                w.ckv("DEVICES_TO_DISABLE_ON_SAV_NOT_IN_USE", &dev.join(" "));
+            }
+        }
     }
 }
 
@@ -666,8 +783,7 @@ fn audio(w: &mut W, hw: &Hardware) {
     }
     w.section("Audio");
     w.info(&format!("Sound cards: {}", hw.audio.cards.join(", ")));
-    w.kv("SOUND_POWER_SAVE_ON_AC", "0");
-    w.kv("SOUND_POWER_SAVE_ON_BAT", "1");
+    w.dual("SOUND_POWER_SAVE", "0", "1", "1");
     if hw.audio.hda {
         w.kv("SOUND_POWER_SAVE_CONTROLLER", "Y");
     }
@@ -691,8 +807,7 @@ fn misc(w: &mut W, hw: &Hardware) {
                 choices.join(" "), cur.as_deref().unwrap_or("?")
             ));
             if choices.iter().any(|c| c == "deep") {
-                w.ckv("MEM_SLEEP_ON_AC", "s2idle");
-                w.ckv("MEM_SLEEP_ON_BAT", "deep");
+                w.dual_c("MEM_SLEEP", "s2idle", "deep", "deep");
             }
         }
     }
@@ -805,196 +920,7 @@ mod tests {
     use super::*;
     use std::collections::HashSet;
 
-    // ---------- fixtures ----------
-
-    fn bat(name: &str, start: bool, stop: bool) -> Battery {
-        Battery {
-            name: name.into(),
-            manufacturer: Some("SMP".into()),
-            model: Some("L17M3P55".into()),
-            technology: Some("Li-poly".into()),
-            status: Some("Discharging".into()),
-            capacity: Some(80),
-            design: Some(45_000_000),
-            full: Some(41_000_000),
-            unit: "Wh",
-            cycles: Some(212),
-            health: Some(91.1),
-            has_start: start,
-            has_stop: stop,
-            cur_start: Some(0),
-            cur_stop: Some(100),
-            has_behaviour: false,
-        }
-    }
-
-    fn disk(name: &str, t: Transport, rot: bool, scheds: &[&str]) -> Disk {
-        Disk {
-            name: name.into(),
-            model: "Test Disk".into(),
-            firmware: None,
-            size_bytes: 512_000_000_000,
-            rotational: rot,
-            removable: false,
-            transport: t,
-            scheds: scheds.iter().map(|s| s.to_string()).collect(),
-            sched: scheds.first().map(|s| s.to_string()),
-            driver: Some(if t == Transport::Nvme { "nvme" } else { "ahci" }.into()),
-        }
-    }
-
-    fn strs(v: &[&str]) -> Vec<String> {
-        v.iter().map(|s| s.to_string()).collect()
-    }
-
-    fn intel_gpu() -> Gpu {
-        Gpu {
-            addr: "0000:00:02.0".into(),
-            vendor: GpuVendor::Intel,
-            name: "Intel Corporation TigerLake-LP GT2".into(),
-            driver: Some("i915".into()),
-            role: "integrated",
-            card: Some("card0".into()),
-            dpm_level: None,
-            has_dpm_state: false,
-            runtime_status: Some("active".into()),
-            intel_freqs: Some((100, Some(700), 1150)),
-            nvidia_dyn_pm: None,
-        }
-    }
-
-    fn nvidia_gpu() -> Gpu {
-        Gpu {
-            addr: "0000:01:00.0".into(),
-            vendor: GpuVendor::Nvidia,
-            name: "NVIDIA Corporation GA106M".into(),
-            driver: Some("nvidia".into()),
-            role: "discrete",
-            card: Some("card1".into()),
-            dpm_level: None,
-            has_dpm_state: false,
-            runtime_status: Some("active".into()),
-            intel_freqs: None,
-            nvidia_dyn_pm: Some(0),
-        }
-    }
-
-    /// A realistic hybrid-graphics Intel laptop with NVMe + SATA SSD + HDD.
-    fn laptop() -> Hardware {
-        Hardware {
-            platform: Platform {
-                vendor: "LENOVO".into(),
-                product: "ThinkPad X1 Carbon".into(),
-                chassis: "Notebook".into(),
-                chassis_is_portable: true,
-                pcie_aspm: Some((
-                    strs(&["default", "performance", "powersave", "powersupersave"]),
-                    Some("default".into()),
-                )),
-                mem_sleep: Some((strs(&["s2idle", "deep"]), Some("s2idle".into()))),
-                nmi_watchdog: true,
-                ..Default::default()
-            },
-            cpu: Cpu {
-                model: "11th Gen Intel(R) Core(TM) i7-1185G7".into(),
-                vendor: CpuVendor::Intel,
-                logical: 8,
-                physical: 4,
-                driver: Some("intel_pstate".into()),
-                governors: strs(&["performance", "powersave"]),
-                governor: Some("powersave".into()),
-                epp_choices: strs(&[
-                    "default",
-                    "performance",
-                    "balance_performance",
-                    "balance_power",
-                    "power",
-                ]),
-                epp: Some("balance_performance".into()),
-                min_khz: Some(400_000),
-                max_khz: Some(4_800_000),
-                boost_knob: Some("intel_pstate/no_turbo".into()),
-                intel_pstate: Some("active".into()),
-                intel_perf_pct: true,
-                hwp: true,
-                hwp_dyn_boost: true,
-                platform_profiles: strs(&["low-power", "balanced", "performance"]),
-                platform_profile: Some("balanced".into()),
-                ..Default::default()
-            },
-            batteries: vec![bat("BAT0", true, true)],
-            ac: vec![],
-            disks: vec![
-                disk("nvme0n1", Transport::Nvme, false, &["none", "mq-deadline"]),
-                disk("sda", Transport::Sata, false, &["mq-deadline", "none"]),
-                disk(
-                    "sdb",
-                    Transport::Sata,
-                    true,
-                    &["mq-deadline", "bfq", "none"],
-                ),
-            ],
-            sata_link_pm: Some("max_performance".into()),
-            gpus: vec![intel_gpu(), nvidia_gpu()],
-            net: vec![
-                NetIf {
-                    name: "wlp0s20f3".into(),
-                    kind: NetKind::Wifi,
-                    driver: Some("iwlwifi".into()),
-                    bus: "pci/other",
-                },
-                NetIf {
-                    name: "enp0s31f6".into(),
-                    kind: NetKind::Ethernet,
-                    driver: Some("e1000e".into()),
-                    bus: "pci/other",
-                },
-            ],
-            bluetooth: vec![Bluetooth {
-                name: "hci0".into(),
-                driver: Some("btusb".into()),
-            }],
-            audio: Audio {
-                hda: true,
-                ac97: false,
-                cards: strs(&["PCH"]),
-            },
-            usb: vec![
-                UsbDev {
-                    id: "046d:c52b".into(),
-                    name: "Logitech Receiver".into(),
-                    hid: true,
-                    bluetooth: false,
-                    removable: "removable".into(),
-                },
-                UsbDev {
-                    id: "04f2:b6d9".into(),
-                    name: "Integrated Camera".into(),
-                    hid: false,
-                    bluetooth: false,
-                    removable: "fixed".into(),
-                },
-                UsbDev {
-                    id: "8087:0033".into(),
-                    name: "Intel Bluetooth".into(),
-                    hid: false,
-                    bluetooth: true,
-                    removable: "fixed".into(),
-                },
-            ],
-            services: vec![],
-            tlp: TlpInfo {
-                installed: true,
-                version: Some((1, 7)),
-                version_str: Some("1.7.0".into()),
-                has_hdparm: true,
-                has_iw: true,
-                has_ethtool: true,
-                has_dropin_dir: true,
-            },
-            pci: vec![],
-        }
-    }
+    use crate::demo::{battery as bat, disk, intel_gpu, strs, thinkpad as laptop};
 
     fn opts(p: Profile) -> Options {
         Options {
@@ -1385,10 +1311,15 @@ mod tests {
 
     #[test]
     fn output_is_well_formed_for_every_profile() {
-        for p in [Profile::Balanced, Profile::Performance, Profile::Battery] {
+        for (p, ver) in [Profile::Balanced, Profile::Performance, Profile::Battery]
+            .into_iter()
+            .flat_map(|p| [None, Some((1, 7)), Some((1, 11))].map(|v| (p, v)))
+        {
             for terse in [false, true] {
+                let mut hw = laptop();
+                hw.tlp.version = ver;
                 let t = generate(
-                    &laptop(),
+                    &hw,
                     &Options {
                         profile: p,
                         start: None,
@@ -1455,10 +1386,207 @@ mod tests {
         assert_eq!(Profile::parse("turbo"), None);
     }
 
-    /// `cargo test print_example -- --ignored --nocapture > docs/example-config.conf`
+    fn modern() -> Hardware {
+        let mut hw = laptop();
+        hw.tlp.version = Some((1, 11));
+        hw.tlp.version_str = Some("1.11.0".into());
+        hw
+    }
+
+    fn active_keys(text: &str) -> Vec<String> {
+        text.lines()
+            .filter(|l| !l.is_empty() && !l.starts_with('#'))
+            .filter_map(|l| l.split_once('=').map(|(k, _)| k.to_string()))
+            .collect()
+    }
+
     #[test]
-    #[ignore]
-    fn print_example() {
-        print!("{}", gen(&laptop(), Profile::Balanced).text);
+    fn tlp_1_11_uses_profile_suffixes() {
+        let t = gen(&modern(), Profile::Balanced).text;
+        for base in [
+            "CPU_SCALING_GOVERNOR",
+            "CPU_ENERGY_PERF_POLICY",
+            "CPU_BOOST",
+            "CPU_HWP_DYN_BOOST",
+            "CPU_MIN_PERF",
+            "CPU_MAX_PERF",
+            "PLATFORM_PROFILE",
+            "INTEL_GPU_MIN_FREQ",
+            "INTEL_GPU_MAX_FREQ",
+            "INTEL_GPU_BOOST_FREQ",
+            "DISK_APM_LEVEL",
+            "DISK_SPINDOWN_TIMEOUT",
+            "SATA_LINKPWR",
+            "AHCI_RUNTIME_PM",
+            "PCIE_ASPM",
+            "RUNTIME_PM",
+            "WIFI_PWR",
+            "SOUND_POWER_SAVE",
+        ] {
+            for suffix in ["PRF", "BAL", "SAV"] {
+                assert!(
+                    t.contains(&format!("\n{base}_ON_{suffix}=")),
+                    "missing {base}_ON_{suffix}"
+                );
+            }
+        }
+        let keys = active_keys(&t);
+        assert!(
+            !keys
+                .iter()
+                .any(|k| k.ends_with("_ON_AC") || k.ends_with("_ON_BAT")),
+            "legacy suffix leaked: {keys:?}"
+        );
+    }
+
+    #[test]
+    fn classic_names_for_old_or_unknown_tlp() {
+        for ver in [None, Some((1, 6)), Some((1, 10))] {
+            let mut hw = laptop();
+            hw.tlp.version = ver;
+            let keys = active_keys(&gen(&hw, Profile::Balanced).text);
+            assert!(
+                keys.iter().any(|k| k == "CPU_BOOST_ON_AC"),
+                "version {ver:?}"
+            );
+            assert!(
+                keys.iter().any(|k| k == "CPU_BOOST_ON_BAT"),
+                "version {ver:?}"
+            );
+            assert!(
+                !keys.iter().any(|k| k.ends_with("_ON_PRF")
+                    || k.ends_with("_ON_BAL")
+                    || k.ends_with("_ON_SAV")),
+                "version {ver:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn power_saver_profile_gets_the_aggressive_values() {
+        let t = gen(&modern(), Profile::Balanced).text;
+        assert!(has(&t, r#"CPU_ENERGY_PERF_POLICY_ON_BAL="balance_power""#));
+        assert!(has(&t, r#"CPU_ENERGY_PERF_POLICY_ON_SAV="power""#));
+        assert!(has(&t, r#"CPU_MAX_PERF_ON_BAL="100""#));
+        assert!(has(&t, r#"CPU_MAX_PERF_ON_SAV="60""#));
+        assert!(has(&t, r#"PCIE_ASPM_ON_BAL="powersave""#));
+        assert!(has(&t, r#"PCIE_ASPM_ON_SAV="powersupersave""#));
+        assert!(has(&t, r#"INTEL_GPU_MAX_FREQ_ON_BAL="1150""#));
+        assert!(has(&t, r#"INTEL_GPU_MAX_FREQ_ON_SAV="700""#));
+        assert!(has(&t, r#"DISK_APM_LEVEL_ON_PRF="keep keep 254""#));
+        assert!(has(&t, r#"DISK_SPINDOWN_TIMEOUT_ON_SAV="keep keep 60""#));
+        // The performance profile only changes plugged-in/balanced behaviour; saver stays a saver.
+        let p = gen(&modern(), Profile::Performance).text;
+        assert!(has(&p, r#"CPU_BOOST_ON_BAL="1""#));
+        assert!(has(&p, r#"CPU_BOOST_ON_SAV="0""#));
+    }
+
+    #[test]
+    fn desktop_pinning_depends_on_scheme() {
+        let strip = |mut hw: Hardware| {
+            hw.batteries.clear();
+            hw.platform.chassis_is_portable = false;
+            hw
+        };
+        let new = gen(&strip(modern()), Profile::Balanced).text;
+        assert!(has(&new, r#"TLP_AUTO_SWITCH="0""#));
+        assert!(has(&new, r#"TLP_PROFILE_DEFAULT="PRF""#));
+        assert!(!new.contains("TLP_PERSISTENT_DEFAULT") && !new.contains("TLP_DEFAULT_MODE"));
+        let old = gen(&strip(laptop()), Profile::Balanced).text;
+        assert!(has(&old, r#"TLP_PERSISTENT_DEFAULT="1""#));
+        assert!(has(&old, r#"TLP_DEFAULT_MODE="AC""#));
+        assert!(!old.contains("TLP_AUTO_SWITCH"));
+    }
+
+    #[test]
+    fn laptops_are_not_pinned() {
+        for hw in [laptop(), modern()] {
+            let keys = active_keys(&gen(&hw, Profile::Balanced).text);
+            for k in [
+                "TLP_DEFAULT_MODE",
+                "TLP_PERSISTENT_DEFAULT",
+                "TLP_AUTO_SWITCH",
+                "TLP_PROFILE_DEFAULT",
+            ] {
+                assert!(
+                    !keys.iter().any(|x| x == k),
+                    "{k} must not be set on a laptop"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn removed_radeon_state_keys_are_never_emitted() {
+        for hw in [laptop(), modern()] {
+            let mut hw = hw;
+            hw.gpus = vec![Gpu {
+                vendor: GpuVendor::Amd,
+                driver: Some("radeon".into()),
+                dpm_level: Some("auto".into()),
+                has_dpm_state: true,
+                intel_freqs: None,
+                ..intel_gpu()
+            }];
+            let t = gen(&hw, Profile::Balanced).text;
+            assert!(t.contains("RADEON_DPM_PERF_LEVEL_ON_"));
+            assert!(!t.contains("RADEON_DPM_STATE"));
+        }
+    }
+
+    #[test]
+    fn radio_hint_uses_the_right_name() {
+        let t = gen(&modern(), Profile::Balanced).text;
+        assert!(has(
+            &t,
+            r##"#DEVICES_TO_DISABLE_ON_BAL_NOT_IN_USE="bluetooth""##
+        ));
+        assert!(has(
+            &t,
+            r##"#DEVICES_TO_DISABLE_ON_SAV_NOT_IN_USE="bluetooth""##
+        ));
+        assert!(!t.contains("ON_BAT_NOT_IN_USE"));
+    }
+
+    #[test]
+    fn frequency_cap_without_percentage_knob() {
+        let mut hw = modern();
+        hw.cpu = Cpu {
+            vendor: CpuVendor::Intel,
+            driver: Some("acpi-cpufreq".into()),
+            governors: strs(&[
+                "conservative",
+                "ondemand",
+                "powersave",
+                "performance",
+                "schedutil",
+            ]),
+            max_khz: Some(3_000_000),
+            ..Default::default()
+        };
+        let bal = gen(&hw, Profile::Balanced).text;
+        assert!(
+            !bal.contains("CPU_SCALING_MAX_FREQ_ON_BAL"),
+            "balanced does not cap"
+        );
+        assert!(has(&bal, r#"CPU_SCALING_MAX_FREQ_ON_SAV="1800000""#));
+        let bat = gen(&hw, Profile::Battery).text;
+        assert!(has(&bat, r#"CPU_SCALING_MAX_FREQ_ON_BAL="1800000""#));
+    }
+
+    #[test]
+    fn header_states_which_key_style_was_used() {
+        assert!(gen(&modern(), Profile::Balanced)
+            .text
+            .contains("profile-style keys"));
+        assert!(gen(&laptop(), Profile::Balanced)
+            .text
+            .contains("classic keys"));
+        let mut unknown = laptop();
+        unknown.tlp.version = None;
+        unknown.tlp.version_str = None;
+        assert!(gen(&unknown, Profile::Balanced)
+            .text
+            .contains("version unknown"));
     }
 }

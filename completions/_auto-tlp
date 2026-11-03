@@ -9,5 +9,7 @@ _arguments \
   '(-r --report)'{-r,--report}'[print the detected hardware report]' \
   '(-v --verbose)'{-v,--verbose}'[with --report: list all PCI/USB devices]' \
   '--terse[omit explanatory comments]' \
+  '--tlp-version[generate for this TLP version (>=1.11 = new key names)]:version:' \
+  '--demo[use a built-in sample laptop instead of scanning]' \
   '(-h --help)'{-h,--help}'[show help]' \
   '(-V --version)'{-V,--version}'[show version]'

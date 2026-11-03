@@ -101,18 +101,21 @@ jobs:
           ./target/release/auto-tlp --report | grep -E '^TLP: [0-9]+\.[0-9]+'
 
   tlp-upstream:
-    name: Keys still valid in upstream TLP (informational)
+    name: Works with upstream TLP main (informational)
     runs-on: ubuntu-latest
+    # Upstream main is a moving target; a failure here means "look at this soon", not "broken release".
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked
-      - name: Compare against upstream TLP's documented keys
+      - name: Keys exist in upstream's documented tlp.conf
         run: |
           curl -fsSL -o upstream-tlp.conf https://raw.githubusercontent.com/linrunner/TLP/main/tlp.conf.in
-          TLP_KEY_FILES=upstream-tlp.conf scripts/validate-keys.sh target/release/auto-tlp
+          TLP_KEY_FILES=upstream-tlp.conf AUTO_TLP_EXTRA="--tlp-version 1.11" scripts/validate-keys.sh target/release/auto-tlp
+      - name: Real TLP built from source accepts the config (no deprecated or renamed keys)
+        run: scripts/check-with-tlp-source.sh target/release/auto-tlp main
 
   packages:
     name: Packages (deb, rpm, AppImage, tar.gz) + install tests

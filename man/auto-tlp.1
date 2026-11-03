@@ -47,6 +47,15 @@ With \fB\-\-report\fR, also list every PCI and USB device, sensors and the kerne
 .B \-\-terse
 Omit explanatory comments from the generated configuration.
 .TP
+.BI \-\-tlp\-version " X.Y"
+Generate for this TLP version instead of the detected one. TLP 1.11 and newer use the profile-style key
+names (\fB_ON_PRF\fR, \fB_ON_BAL\fR, \fB_ON_SAV\fR); older versions use \fB_ON_AC\fR and \fB_ON_BAT\fR.
+When the version cannot be determined the classic names are used, because every TLP version accepts them.
+.TP
+.B \-\-demo
+Use a built-in sample laptop (hybrid-graphics ThinkPad with NVMe, SATA SSD and HDD) instead of scanning this
+machine, to preview the full range of output. Cannot be combined with \fB\-\-install\fR.
+.TP
 .BR \-h ", " \-\-help
 Show usage.
 .TP

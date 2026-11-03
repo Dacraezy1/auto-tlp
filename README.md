@@ -24,6 +24,8 @@ $ sudo auto-tlp --install      # 3. install it as /etc/tlp.d/99-auto-tlp.conf
 $ sudo tlp start               # 4. apply it
 ```
 
+Just curious? `auto-tlp --demo` shows what a full-featured laptop's config looks like, on any computer.
+
 ## Contents
 
 [Install](#install) · [How it works](#how-it-works) · [What it detects](#what-it-detects-and-configures) ·
@@ -58,6 +60,8 @@ The distro packages depend on `tlp`, so it gets installed with them.
    values the kernel actually offers (for example an I/O scheduler that is really available for *that* disk).
 3. **Write.** It prints a tidy config, grouped by topic, with the detected facts as comments. Hardware you
    don't have produces no settings at all.
+
+It reads your installed **TLP version** and writes the matching key names (see [TLP versions](#tlp-versions-and-key-names)).
 
 It also warns you about things that would stop TLP from working well: a conflicting daemon
 (`power-profiles-daemon`, `tuned`, `auto-cpufreq`...), missing helper tools (`hdparm`, `iw`, `ethtool`), an
@@ -96,28 +100,53 @@ Choose with `--profile`. **`balanced`** (the default) follows TLP's own philosop
 
 Override the charge limit on any profile: `auto-tlp --start-thresh 60 --stop-thresh 85`.
 
+With **TLP 1.11 or newer**, TLP has three runtime profiles of its own, and auto-tlp fills in all three:
+
+| TLP profile | When it is used | Values come from |
+|---|---|---|
+| `PRF` (performance) | plugged in (TLP's default) | the "AC" tuning of your chosen `--profile` |
+| `BAL` (balanced) | on battery (TLP's default) | the "battery" tuning of your chosen `--profile` |
+| `SAV` (power-saver) | when you run `tlp power-saver` | always the aggressive `battery` tuning |
+
+## TLP versions and key names
+
+TLP 1.11 renamed its settings: `CPU_BOOST_ON_AC` became `CPU_BOOST_ON_PRF`, `CPU_BOOST_ON_BAT` became `CPU_BOOST_ON_BAL`, and a new `_ON_SAV` power-saver variant appeared.
+
+| Your TLP | What auto-tlp writes | Why |
+|---|---|---|
+| **1.11 or newer** | `_ON_PRF`, `_ON_BAL`, `_ON_SAV` | the current names; no deprecation hints |
+| **older, or not detected** | `_ON_AC`, `_ON_BAT` | understood by every version. New TLP still accepts them but prints *"Runtime-translated ... Change your config!"* |
+
+Generating a config for a machine you are not on? `auto-tlp --tlp-version 1.11`.
+Settings TLP removed or deprecated (`RADEON_DPM_STATE_*`, `TLP_PERSISTENT_DEFAULT`) are never written for new TLP.
+
 ## Example output
 
-A real result (for a hybrid-graphics ThinkPad with NVMe + SATA SSD + HDD). The full file is in
-[`docs/example-config.conf`](docs/example-config.conf).
+Preview it yourself with `auto-tlp --demo`. This is the built-in sample laptop (hybrid-graphics ThinkPad with
+NVMe + SATA SSD + HDD) for TLP 1.11; the full files are
+[`docs/example-config.conf`](docs/example-config.conf) and, for older TLP,
+[`docs/example-config-classic.conf`](docs/example-config-classic.conf).
 
 ```ini
 # ===== CPU =====
 # 11th Gen Intel(R) Core(TM) i7-1185G7 - 4 cores / 8 threads
 # scaling driver: intel_pstate (active mode); governors: performance powersave
-CPU_SCALING_GOVERNOR_ON_AC="powersave"
-CPU_SCALING_GOVERNOR_ON_BAT="powersave"
-CPU_ENERGY_PERF_POLICY_ON_AC="balance_performance"
-CPU_ENERGY_PERF_POLICY_ON_BAT="balance_power"
-CPU_BOOST_ON_AC="1"
-CPU_BOOST_ON_BAT="0"
+CPU_SCALING_GOVERNOR_ON_PRF="powersave"
+CPU_SCALING_GOVERNOR_ON_BAL="powersave"
+CPU_SCALING_GOVERNOR_ON_SAV="powersave"
+CPU_ENERGY_PERF_POLICY_ON_PRF="balance_performance"
+CPU_ENERGY_PERF_POLICY_ON_BAL="balance_power"
+CPU_ENERGY_PERF_POLICY_ON_SAV="power"
+CPU_BOOST_ON_PRF="1"
+CPU_BOOST_ON_BAL="0"
+CPU_BOOST_ON_SAV="0"
 
 # ===== Storage =====
-# nvme0n1: NVMe SSD [NVMe, driver nvme, scheduler none]
-# sdb: HDD [SATA, driver ahci, scheduler mq-deadline]
+# nvme0n1: NVMe SSD Samsung SSD 980 PRO 512GB [NVMe, driver nvme, scheduler none]
+# sdb: HDD WDC WD10SPZX-24Z10 [SATA, driver ahci, scheduler mq-deadline]
 DISK_DEVICES="nvme0n1 sda sdb"
 DISK_IOSCHED="none mq-deadline bfq"
-DISK_APM_LEVEL_ON_BAT="keep keep 128"      # only the HDD gets APM settings
+DISK_APM_LEVEL_ON_BAL="keep keep 128"      # only the HDD gets APM settings
 
 # ===== Battery care =====
 # BAT0: L17M3P55 (Li-poly) health 91%, 212 cycles
@@ -138,6 +167,8 @@ auto-tlp [OPTIONS]
   -r, --report             only print the detected hardware report
   -v, --verbose            with --report: also list all PCI/USB devices and sensors
       --terse              omit explanatory comments
+      --tlp-version <X.Y>  generate for this TLP version instead of the installed one
+      --demo               use a built-in sample laptop instead of scanning this machine
   -h, --help / -V, --version
 ```
 
@@ -163,8 +194,8 @@ and the fix is `sudo systemctl disable --now power-profiles-daemon`.
 from runtime PM so TLP doesn't fight it, and warns you how to enable
 `NVreg_DynamicPowerManagement=0x02` if you want the GPU to power off.
 
-**Which TLP versions work?** 1.5 and newer is the target. For older versions auto-tlp switches to the legacy
-`*_BLACKLIST` key names and skips keys that don't exist yet.
+**Which TLP versions work?** All of them. auto-tlp reads your installed version and writes the matching key
+names; see [TLP versions and key names](#tlp-versions-and-key-names).
 
 **A device was misdetected.** Please [open an issue](https://github.com/Dacraezy1/auto-tlp/issues/new/choose)
 with the output of `auto-tlp --report --verbose`. These reports are the most valuable contribution.
@@ -184,6 +215,7 @@ There are **no crate dependencies**, so the build works offline and the whole pr
 src/hw.rs        detection (sysfs/procfs/DMI) -> plain data structs
 src/gen.rs       data structs -> TLP config (profiles, rules, warnings) + unit tests
 src/report.rs    human-readable --report
+src/demo.rs      built-in sample laptop for --demo, CI and tests
 src/main.rs      CLI
 tests/cli.rs     end-to-end tests of the real binary
 packaging/       recipes for Arch, Alpine, Void, Gentoo, RPM, AppImage
@@ -204,6 +236,7 @@ Every push runs this matrix in GitHub Actions. Maintainers: see [`docs/RELEASING
 | `.pkg.tar.zst` (Arch) | ✅ built with `makepkg` from the `PKGBUILD`, then installed |
 | `.AppImage` | ✅ executed |
 | Nix flake | ✅ `nix build` |
+| Generated keys vs **real TLP** | ✅ every key checked against TLP 1.6 (from apt) and against upstream TLP built from source, which must report no deprecated or renamed settings |
 | Source build with each distro's own Rust | ✅ Ubuntu, Fedora, Alpine, openSUSE, Arch |
 | Alpine `APKBUILD`, Void `template`, Gentoo `ebuild`, source `.spec` | 📝 provided as starting points, not CI-tested; PRs welcome |
 

@@ -8,8 +8,8 @@ _auto_tlp() {
     case "$prev" in
         -p|--profile) COMPREPLY=( $(compgen -W "balanced performance battery" -- "$cur") ); return ;;
         -o|--output)  COMPREPLY=( $(compgen -f -- "$cur") ); return ;;
-        --start-thresh|--stop-thresh) return ;;
+        --start-thresh|--stop-thresh|--tlp-version) return ;;
     esac
-    COMPREPLY=( $(compgen -W "-p --profile --start-thresh --stop-thresh -o --output --install -r --report -v --verbose --terse -h --help -V --version" -- "$cur") )
+    COMPREPLY=( $(compgen -W "-p --profile --start-thresh --stop-thresh -o --output --install -r --report -v --verbose --terse --tlp-version --demo -h --help -V --version" -- "$cur") )
 }
 complete -F _auto_tlp auto-tlp

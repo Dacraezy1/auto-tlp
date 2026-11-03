@@ -62,6 +62,9 @@ fn bad_arguments_exit_with_code_2() {
         &["--start-thresh", "abc"],
         &["--stop-thresh", "0"],
         &["--stop-thresh", "101"],
+        &["--tlp-version", "abc"],
+        &["--tlp-version"],
+        &["--demo", "--install"],
     ] {
         let o = bin(args);
         assert_eq!(o.status.code(), Some(2), "args {args:?} should fail with 2");
@@ -147,4 +150,66 @@ fn threshold_flags_are_accepted() {
     }
     let o = bin(&["--start-thresh", "40", "--stop-thresh", "80"]);
     assert!(o.status.success());
+}
+
+// ---- --demo / --tlp-version: independent of the machine, so they run everywhere ----
+
+fn active_keys(out: &Output) -> Vec<String> {
+    text(out)
+        .lines()
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .filter_map(|l| l.split_once('=').map(|(k, _)| k.to_string()))
+        .collect()
+}
+
+#[test]
+fn demo_with_modern_tlp_uses_profile_names() {
+    let o = bin(&["--demo", "--tlp-version", "1.11"]);
+    assert!(o.status.success());
+    let keys = active_keys(&o);
+    for k in [
+        "CPU_BOOST_ON_PRF",
+        "CPU_BOOST_ON_BAL",
+        "CPU_BOOST_ON_SAV",
+        "START_CHARGE_THRESH_BAT0",
+    ] {
+        assert!(keys.iter().any(|x| x == k), "missing {k}");
+    }
+    assert!(!keys
+        .iter()
+        .any(|k| k.ends_with("_ON_AC") || k.ends_with("_ON_BAT")));
+    assert!(text(&o).contains("# TLP       : 1.11"));
+}
+
+#[test]
+fn demo_with_old_tlp_uses_classic_names() {
+    let o = bin(&["--demo", "--tlp-version", "1.6.1"]);
+    assert!(o.status.success());
+    let keys = active_keys(&o);
+    assert!(keys.iter().any(|k| k == "CPU_BOOST_ON_AC"));
+    assert!(keys.iter().any(|k| k == "CPU_BOOST_ON_BAT"));
+    assert!(!keys
+        .iter()
+        .any(|k| k.ends_with("_ON_PRF") || k.ends_with("_ON_BAL") || k.ends_with("_ON_SAV")));
+}
+
+#[test]
+fn demo_report_describes_the_sample_laptop() {
+    let o = bin(&["--demo", "--report"]);
+    assert!(o.status.success());
+    assert!(text(&o).contains("ThinkPad"));
+}
+
+#[test]
+fn demo_profiles_differ_where_they_should() {
+    let bal = text(&bin(&["--demo", "--tlp-version", "1.11", "-p", "balanced"]));
+    let perf = text(&bin(&[
+        "--demo",
+        "--tlp-version",
+        "1.11",
+        "-p",
+        "performance",
+    ]));
+    assert!(bal.contains("CPU_BOOST_ON_BAL=\"0\""));
+    assert!(perf.contains("CPU_BOOST_ON_BAL=\"1\""));
 }

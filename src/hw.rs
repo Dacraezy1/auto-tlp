@@ -889,6 +889,12 @@ pub struct TlpInfo {
 }
 
 impl TlpInfo {
+    /// TLP 1.11 introduced profile-style keys (`*_ON_PRF/BAL/SAV`). Only true when the version is known:
+    /// the classic `*_ON_AC/BAT` names are accepted by every TLP version, the new ones only by >= 1.11.
+    pub fn uses_profiles(&self) -> bool {
+        self.version.is_some_and(|v| v >= (1, 11))
+    }
+
     /// True if the installed TLP is at least `maj.min` (or if unknown: assume modern).
     pub fn at_least(&self, maj: u32, min: u32) -> bool {
         self.version.map_or(true, |v| v >= (maj, min))
