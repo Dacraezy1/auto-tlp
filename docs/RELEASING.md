@@ -23,6 +23,31 @@ Pushing the tag runs, in order:
 The workflow refuses to publish if the tag does not match the version in `Cargo.toml`.
 Running the workflow manually ("Run workflow") builds everything but does **not** publish.
 
+## Release page has no files?
+
+Assets are attached by the last job of the **Release** workflow, so the page stays empty until the whole run is
+green. The first run takes about 25-40 minutes (full CI, then native x86\_64 and aarch64 builds).
+
+1. Open **Actions → Release** and look for a run named after your tag.
+   - *Running*: wait. The files appear when the last job ("Publish GitHub release") finishes.
+   - *Failed*: open it, read the red step. From a terminal: `gh run list --workflow Release` then
+     `gh run view <id> --log-failed`.
+   - *No run at all*: the tag was probably not pushed from a commit that contains `release.yml`.
+2. **Re-run for an existing tag** without touching git: Actions → Release → *Run workflow* → type the tag
+   (for example `v0.1.0`). It rebuilds from that tag and attaches everything to the existing release.
+   The tag must point at a commit that already has the fixes you want.
+3. **Start clean** (delete the release and tag, then tag the current commit again):
+
+   ```console
+   gh release delete v0.1.0 --cleanup-tag --yes     # or delete the release in the web UI
+   git tag -d v0.1.0
+   git pull && git tag v0.1.0 && git push origin v0.1.0
+   ```
+
+If "Publish GitHub release" fails with *Resource not accessible by integration*, set
+Settings → Actions → General → Workflow permissions to **Read and write**.
+A *draft* release is not found by tag name; publish or delete it first.
+
 ## Release assets
 
 | File | Purpose |

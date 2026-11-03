@@ -1,18 +1,32 @@
 name: Release
 
-# Push a tag like v0.1.0 to publish a release:
+# Publish a release (from your terminal):
 #   git tag v0.1.0 && git push origin v0.1.0
-# "Run workflow" (manual) builds everything and uploads it as workflow artifacts without publishing.
+#
+# Assets are attached at the very END of the run, after the full CI and the native x86_64 + aarch64
+# builds, so a run takes roughly 25-40 minutes and the release only shows its files once it finishes.
+#
+# Missing assets on an existing tag (e.g. the tag was created in the GitHub web UI, or a run failed)?
+#   Actions -> Release -> "Run workflow" -> enter the tag (e.g. v0.1.0).
+#   That rebuilds from the tag and attaches everything to the existing release.
+# Leaving the tag field empty only builds, and uploads the files as workflow artifacts without publishing.
 on:
   push:
     tags: ["v[0-9]+.[0-9]+.[0-9]+*"]
   workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to build and publish (e.g. v0.1.0). Empty = build only, no release."
+        required: false
+        type: string
 
 permissions:
   contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  # The tag being released: the pushed tag, or the one typed into "Run workflow", or empty.
+  RELEASE_TAG: ${{ inputs.tag || (startsWith(github.ref, 'refs/tags/v') && github.ref_name) || '' }}
 
 jobs:
   ci:
@@ -31,14 +45,16 @@ jobs:
           - { runner: ubuntu-24.04-arm, target: aarch64-unknown-linux-musl }
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG || github.sha }}
 
       - name: Tag must match Cargo.toml version
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: env.RELEASE_TAG != ''
         run: |
           CARGO_VERSION="$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -n1)"
-          TAG="${GITHUB_REF_NAME#v}"
+          TAG="${RELEASE_TAG#v}"
           if [ "$CARGO_VERSION" != "$TAG" ]; then
-            echo "::error::tag v$TAG does not match Cargo.toml version $CARGO_VERSION (run scripts/bump-version.sh)"
+            echo "::error::tag $RELEASE_TAG does not match Cargo.toml version $CARGO_VERSION (run scripts/bump-version.sh)"
             exit 1
           fi
 
@@ -64,8 +80,10 @@ jobs:
 
       - name: Run the AppImage
         run: |
-          chmod +x dist/*.AppImage
-          APPIMAGE_EXTRACT_AND_RUN=1 dist/*.AppImage --version
+          export APPIMAGE_EXTRACT_AND_RUN=1
+          APPIMAGE="$(ls dist/*.AppImage)"
+          chmod +x "$APPIMAGE"
+          "$APPIMAGE" --version
 
       - uses: actions/upload-artifact@v4
         with:
@@ -79,6 +97,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG || github.sha }}
       - run: |
           mkdir -p dist-arch
           docker run --rm -v "$PWD:/src:ro" -v "$PWD/dist-arch:/out" archlinux:base-devel /src/scripts/build-arch-pkg.sh /out
@@ -91,7 +111,8 @@ jobs:
   publish:
     name: Publish GitHub release
     needs: [build, arch]
-    if: startsWith(github.ref, 'refs/tags/v')
+    # Only when a tag is being released (pushed tag, or typed into "Run workflow").
+    if: ${{ inputs.tag != '' || startsWith(github.ref, 'refs/tags/v') }}
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -99,6 +120,8 @@ jobs:
       attestations: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ env.RELEASE_TAG }}
       - uses: actions/download-artifact@v4
         with:
           pattern: dist-*
@@ -106,18 +129,21 @@ jobs:
           path: dist
       - name: Source tarball, checksums
         run: |
-          VERSION="${GITHUB_REF_NAME#v}"
+          VERSION="${RELEASE_TAG#v}"
           git archive --format=tar.gz --prefix="auto-tlp-$VERSION/" -o "dist/auto-tlp-$VERSION-src.tar.gz" HEAD
           cd dist
           sha256sum -- * > SHA256SUMS
           cat SHA256SUMS
       - name: Attest build provenance
+        # Nice to have (needs a public repo or a plan with attestations); must never block the release.
+        continue-on-error: true
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/*
-      - name: Create release
+      - name: Create release and attach all files
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ env.RELEASE_TAG }}
           files: dist/*
           generate_release_notes: true
           fail_on_unmatched_files: true
