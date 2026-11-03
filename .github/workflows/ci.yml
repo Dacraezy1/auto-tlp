@@ -22,7 +22,7 @@ jobs:
     name: Lint (rustfmt + clippy)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@1.75.0
         with:
           components: rustfmt, clippy
@@ -34,7 +34,7 @@ jobs:
     name: ShellCheck
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: shellcheck -S warning scripts/*.sh completions/auto-tlp.bash packaging/appimage/AppRun
 
   test:
@@ -46,7 +46,7 @@ jobs:
         os: [ubuntu-latest, ubuntu-24.04-arm]
         rust: [stable, "1.75.0"]   # 1.75.0 is the minimum supported Rust version
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
@@ -66,7 +66,7 @@ jobs:
     name: Static musl build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-musl
@@ -84,7 +84,7 @@ jobs:
     name: Config accepted by real TLP
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: sudo apt-get update && sudo apt-get install -y tlp
@@ -106,7 +106,7 @@ jobs:
     # Upstream main is a moving target; a failure here means "look at this soon", not "broken release".
     continue-on-error: true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --release --locked
@@ -121,7 +121,7 @@ jobs:
     name: Packages (deb, rpm, AppImage, tar.gz) + install tests
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: x86_64-unknown-linux-musl
@@ -149,7 +149,7 @@ jobs:
     name: Arch Linux PKGBUILD (makepkg)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: |
           mkdir -p dist-arch
           docker run --rm -v "$PWD:/src:ro" -v "$PWD/dist-arch:/out" archlinux:base-devel /src/scripts/build-arch-pkg.sh /out
@@ -167,14 +167,14 @@ jobs:
       matrix:
         image: ["ubuntu:24.04", "fedora:latest", "alpine:latest", "opensuse/tumbleweed", "archlinux:base-devel"]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - run: docker run --rm -v "$PWD:/src:ro" -w /src ${{ matrix.image }} sh scripts/distro-build-test.sh
 
   nix:
     name: Nix build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: cachix/install-nix-action@v31
       - run: nix build .#auto-tlp -L
       - run: ./result/bin/auto-tlp --version
