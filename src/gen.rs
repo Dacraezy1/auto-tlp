@@ -4,8 +4,9 @@
 use crate::hw::*;
 use crate::util::*;
 
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Profile {
+    #[default]
     Balanced,
     Performance,
     Battery,
@@ -95,11 +96,29 @@ struct PV {
     gov_ac_perf: bool,
 }
 
+/// The sections of the generated config, in output order. Used by `--only` / `--skip`.
+pub const SECTIONS: &[&str] = &[
+    "general", "cpu", "platform", "graphics", "storage", "pcie", "radios", "usb", "audio",
+    "kernel", "battery",
+];
+
+#[derive(Default)]
 pub struct Options {
     pub profile: Profile,
     pub start: Option<u8>,
     pub stop: Option<u8>,
     pub terse: bool,
+    /// If non-empty, only these sections are generated.
+    pub only: Vec<String>,
+    /// Sections that are never generated.
+    pub skip: Vec<String>,
+}
+
+impl Options {
+    pub fn wants(&self, section: &str) -> bool {
+        (self.only.is_empty() || self.only.iter().any(|s| s == section))
+            && !self.skip.iter().any(|s| s == section)
+    }
 }
 
 pub struct Generated {
@@ -245,17 +264,39 @@ pub fn generate(hw: &Hardware, o: &Options) -> Generated {
     let mut warn: Vec<String> = Vec::new();
 
     header(&mut w, hw, o);
-    general(&mut w, hw, &mut warn);
-    cpu(&mut w, hw, &pv, &mut warn);
-    platform_profile(&mut w, hw, &pv);
-    graphics(&mut w, hw, o.profile, &mut warn);
-    storage(&mut w, hw, &pv, &mut warn);
-    pcie(&mut w, hw, &pv, &mut warn);
-    radios(&mut w, hw, &pv, &mut warn);
-    usb(&mut w, hw);
-    audio(&mut w, hw);
-    misc(&mut w, hw);
-    battery(&mut w, hw, &pv, o, &mut warn);
+    if o.wants("general") {
+        general(&mut w, hw, &mut warn);
+    }
+    if o.wants("cpu") {
+        cpu(&mut w, hw, &pv, &mut warn);
+    }
+    if o.wants("platform") {
+        platform_profile(&mut w, hw, &pv);
+    }
+    if o.wants("graphics") {
+        graphics(&mut w, hw, o.profile, &mut warn);
+    }
+    if o.wants("storage") {
+        storage(&mut w, hw, &pv, &mut warn);
+    }
+    if o.wants("pcie") {
+        pcie(&mut w, hw, &pv, &mut warn);
+    }
+    if o.wants("radios") {
+        radios(&mut w, hw, &pv, &mut warn);
+    }
+    if o.wants("usb") {
+        usb(&mut w, hw);
+    }
+    if o.wants("audio") {
+        audio(&mut w, hw);
+    }
+    if o.wants("kernel") {
+        misc(&mut w, hw);
+    }
+    if o.wants("battery") {
+        battery(&mut w, hw, &pv, o, &mut warn);
+    }
     environment_warnings(hw, &mut warn);
 
     Generated {
@@ -767,7 +808,12 @@ fn usb(w: &mut W, hw: &Hardware) {
             "External input devices kept awake: {}",
             names.join(", ")
         ));
-        let ids: Vec<&str> = hid.iter().map(|u| u.id.as_str()).collect();
+        let mut ids: Vec<&str> = Vec::new();
+        for u in &hid {
+            if !ids.contains(&u.id.as_str()) {
+                ids.push(u.id.as_str());
+            }
+        }
         let key = if hw.tlp.at_least(1, 5) {
             "USB_DENYLIST"
         } else {
@@ -928,6 +974,7 @@ mod tests {
             start: None,
             stop: None,
             terse: false,
+            ..Default::default()
         }
     }
 
@@ -1101,6 +1148,7 @@ mod tests {
                 start: Some(20),
                 stop: Some(90),
                 terse: false,
+                ..Default::default()
             },
         );
         assert!(has(&g.text, r#"START_CHARGE_THRESH_BAT0="20""#));
@@ -1113,6 +1161,7 @@ mod tests {
                 start: Some(90),
                 stop: Some(80),
                 terse: false,
+                ..Default::default()
             },
         );
         assert!(has(&g.text, r#"START_CHARGE_THRESH_BAT0="75""#));
@@ -1325,6 +1374,7 @@ mod tests {
                         start: None,
                         stop: None,
                         terse,
+                        ..Default::default()
                     },
                 )
                 .text;
@@ -1362,6 +1412,7 @@ mod tests {
                 start: None,
                 stop: None,
                 terse: true,
+                ..Default::default()
             },
         )
         .text;

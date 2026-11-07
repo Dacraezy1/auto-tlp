@@ -25,10 +25,11 @@ $ sudo tlp start               # 4. apply it
 ```
 
 Just curious? `auto-tlp --demo` shows what a full-featured laptop's config looks like, on any computer.
+After a kernel or TLP update, `auto-tlp --diff` tells you whether the installed config is still what auto-tlp would write.
 
 ## Contents
 
-[Install](#install) · [How it works](#how-it-works) · [What it detects](#what-it-detects-and-configures) ·
+[Install](#install) · [Everyday commands](#everyday-commands) · [How it works](#how-it-works) · [What it detects](#what-it-detects-and-configures) ·
 [Profiles](#profiles) · [Example](#example-output) · [Usage](#usage) · [FAQ](#faq) ·
 [Building](#building-from-source) · [Packaging status](#packaging-status) · [Contributing](#contributing)
 
@@ -51,6 +52,24 @@ ships with SHA-256 checksums.
 
 Downloads live on the [Releases page](https://github.com/Dacraezy1/auto-tlp/releases/latest).
 The distro packages depend on `tlp`, so it gets installed with them.
+
+## Everyday commands
+
+| I want to... | Command |
+|---|---|
+| see what was detected | `auto-tlp --report` (add `-v` for every PCI and USB device) |
+| preview the config | `auto-tlp` |
+| generate it for battery life | `auto-tlp -p battery` |
+| limit the charge to 60-85% | `auto-tlp --start-thresh 60 --stop-thresh 85` |
+| **install** it and apply it right away | `sudo auto-tlp --install --apply` |
+| see what **changed** since I installed it | `auto-tlp --diff` (exit status 1 = differences) |
+| **remove** it again | `sudo auto-tlp --uninstall --apply` |
+| only some settings | `auto-tlp --only cpu,battery` or `auto-tlp --skip usb,radios` |
+| use it on **NixOS** | `auto-tlp --format nix > tlp.nix` (a `services.tlp.settings` snippet) |
+| feed it to a script | `auto-tlp --format json` |
+
+Sections for `--only` / `--skip`: `general`, `cpu`, `platform`, `graphics`, `storage`, `pcie`, `radios`, `usb`,
+`audio`, `kernel`, `battery`.
 
 ## How it works
 
@@ -166,9 +185,23 @@ auto-tlp [OPTIONS]
       --install            write /etc/tlp.d/99-auto-tlp.conf (needs root; backs up an existing file)
   -r, --report             only print the detected hardware report
   -v, --verbose            with --report: also list all PCI/USB devices and sensors
+      --only <LIST>        only these sections (comma separated)
+      --skip <LIST>        leave these sections out
       --terse              omit explanatory comments
+      --format <FMT>       conf (default) | nix | json
       --tlp-version <X.Y>  generate for this TLP version instead of the installed one
+
+  -o, --output <FILE>      write to FILE instead of stdout ('-' = stdout)
+      --install            write /etc/tlp.d/99-auto-tlp.conf (needs root; backs up an existing file)
+      --uninstall          remove that file (needs root)
+      --apply              with --install/--uninstall: run `tlp start` afterwards
+      --diff               compare with the installed config; exit status 1 if different
+      --against <FILE>     with --diff: compare with FILE instead
+
+  -r, --report             only print the detected hardware report
+  -v, --verbose            with --report: also list all PCI/USB devices and sensors
       --demo               use a built-in sample laptop instead of scanning this machine
+      --sysroot <DIR>      scan a directory tree instead of the live system (for tests)
   -h, --help / -V, --version
 ```
 
@@ -196,6 +229,9 @@ from runtime PM so TLP doesn't fight it, and warns you how to enable
 
 **Which TLP versions work?** All of them. auto-tlp reads your installed version and writes the matching key
 names; see [TLP versions and key names](#tlp-versions-and-key-names).
+
+**What changed after I updated my kernel or TLP?** Run `auto-tlp --diff`. It lists settings that are new (`+`),
+gone (`-`) or different (`~`) compared with the installed config, and exits with status 1 if anything differs.
 
 **A device was misdetected.** Please [open an issue](https://github.com/Dacraezy1/auto-tlp/issues/new/choose)
 with the output of `auto-tlp --report --verbose`. These reports are the most valuable contribution.
@@ -230,6 +266,7 @@ Every push runs this matrix in GitHub Actions. Maintainers: see [`docs/RELEASING
 
 | Format | Built and tested in CI |
 |---|---|
+| Hardware detection | ✅ the real binary is run against fake machines (Intel + hybrid NVIDIA laptop, AMD desktop, NVMe/SATA/HDD, batteries, odd or missing files) |
 | Static `.tar.gz` (x86\_64, aarch64) | ✅ runs on glibc and musl (Alpine) |
 | `.deb` | ✅ installed in clean Debian and Ubuntu containers |
 | `.rpm` | ✅ installed in Fedora, openSUSE and AlmaLinux containers |

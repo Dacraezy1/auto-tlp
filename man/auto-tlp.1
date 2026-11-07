@@ -32,11 +32,42 @@ Battery start-charge threshold, 0-99. Overrides the profile default.
 Battery stop-charge threshold, 1-100. Overrides the profile default.
 .TP
 .BR \-o ", " \-\-output " " \fIFILE\fR
-Write the configuration to \fIFILE\fR instead of standard output.
+Write the configuration to \fIFILE\fR instead of standard output (\fB\-\fR means standard output).
 .TP
 .B \-\-install
 Write the configuration to \fI/etc/tlp.d/99-auto-tlp.conf\fR (requires root).
 An existing file is backed up to \fI99-auto-tlp.conf.bak\fR.
+.TP
+.B \-\-uninstall
+Remove \fI/etc/tlp.d/99-auto-tlp.conf\fR (requires root).
+.TP
+.B \-\-apply
+With \fB\-\-install\fR or \fB\-\-uninstall\fR: run \fBtlp start\fR afterwards.
+.TP
+.B \-\-diff
+Compare the generated configuration with the installed one and print the differences:
+\fB+\fR new setting, \fB\-\fR setting that would disappear, \fB~\fR changed value.
+Exit status is 1 if there are differences, 0 if there are none.
+.TP
+.BI \-\-against " FILE"
+With \fB\-\-diff\fR: compare with \fIFILE\fR instead of the installed configuration.
+.TP
+.BI \-\-only " LIST"
+Generate only these comma-separated sections.
+.TP
+.BI \-\-skip " LIST"
+Leave out these comma-separated sections.
+Sections: \fBgeneral\fR, \fBcpu\fR, \fBplatform\fR, \fBgraphics\fR, \fBstorage\fR, \fBpcie\fR,
+\fBradios\fR, \fBusb\fR, \fBaudio\fR, \fBkernel\fR, \fBbattery\fR.
+.TP
+.BI \-\-format " FMT"
+Output format: \fBconf\fR (default, native TLP config), \fBnix\fR (a NixOS \fBservices.tlp.settings\fR snippet)
+or \fBjson\fR (flat object of the active settings). \fB\-\-install\fR, \fB\-\-uninstall\fR and \fB\-\-diff\fR need \fBconf\fR.
+.TP
+.BI \-\-sysroot " DIR"
+Scan the directory tree \fIDIR\fR instead of the live system. No host commands are run and
+\fB\-\-install\fR/\fB\-\-uninstall\fR are refused. Used by the test-suite; the \fBAUTO_TLP_SYSROOT\fR
+environment variable does the same.
 .TP
 .BR \-r ", " \-\-report
 Print the detected hardware report instead of a configuration.
@@ -54,7 +85,7 @@ When the version cannot be determined the classic names are used, because every 
 .TP
 .B \-\-demo
 Use a built-in sample laptop (hybrid-graphics ThinkPad with NVMe, SATA SSD and HDD) instead of scanning this
-machine, to preview the full range of output. Cannot be combined with \fB\-\-install\fR.
+machine, to preview the full range of output. Cannot be combined with \fB\-\-install\fR or \fB\-\-uninstall\fR.
 .TP
 .BR \-h ", " \-\-help
 Show usage.
@@ -79,7 +110,9 @@ Drop-in written by \fB\-\-install\fR. Settings that are active in
 \fI/etc/tlp.conf\fR take precedence over drop-ins.
 .SH EXIT STATUS
 .B 0
-on success,
+on success (with \fB\-\-diff\fR: no differences),
+.B 1
+with \fB\-\-diff\fR when there are differences,
 .B 2
 on invalid usage or when a file cannot be written.
 .SH SEE ALSO

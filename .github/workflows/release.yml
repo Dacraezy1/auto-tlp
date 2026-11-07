@@ -58,6 +58,10 @@ jobs:
             exit 1
           fi
 
+      - name: CHANGELOG must describe this version
+        if: env.RELEASE_TAG != ''
+        run: scripts/release-notes.sh "${RELEASE_TAG#v}" > /dev/null
+
       - uses: dtolnay/rust-toolchain@stable
         with:
           targets: ${{ matrix.target }}
@@ -140,22 +144,13 @@ jobs:
         uses: actions/attest-build-provenance@v2
         with:
           subject-path: dist/*
+      - name: Release notes (CHANGELOG section + install table)
+        run: scripts/release-notes.sh "${RELEASE_TAG#v}" > notes.md
       - name: Create release and attach all files
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
           files: dist/*
+          body_path: notes.md
           generate_release_notes: true
           fail_on_unmatched_files: true
-          body: |
-            ## Install
-
-            | Distro | How |
-            |---|---|
-            | Any Linux (x86_64 / aarch64) | `curl -fsSL https://raw.githubusercontent.com/Dacraezy1/auto-tlp/main/scripts/install.sh \| sh` |
-            | Debian, Ubuntu, Mint, Pop!_OS | `sudo apt install ./auto-tlp_*_amd64.deb` |
-            | Fedora, RHEL, openSUSE | `sudo dnf install ./auto-tlp-*.rpm` |
-            | Arch, Manjaro, EndeavourOS | `sudo pacman -U auto-tlp-*.pkg.tar.zst` |
-            | Anything else | download the AppImage or the static `.tar.gz` |
-
-            Verify downloads with `sha256sum -c --ignore-missing SHA256SUMS`.

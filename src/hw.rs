@@ -4,7 +4,6 @@
 //! few harmless `systemctl`/`tlp --version` calls.
 use crate::util::*;
 use std::collections::BTreeSet;
-use std::fs;
 use std::path::Path;
 
 // ───────────────────────────── Platform ─────────────────────────────
@@ -390,7 +389,7 @@ impl PciDb {
             "/usr/share/pci.ids",
             "/usr/share/hwdata/pci.ids.gz-unused",
         ] {
-            if let Ok(s) = fs::read_to_string(p) {
+            if let Some(s) = read(p) {
                 return PciDb(Some(s));
             }
         }
@@ -528,7 +527,7 @@ fn detect_disks() -> Vec<Disk> {
         if sectors == 0 {
             continue;
         }
-        let canon = fs::canonicalize(&d).unwrap_or_else(|_| d.clone());
+        let canon = canon(&d);
         let cs = canon.to_string_lossy().to_string();
         let transport = if name.starts_with("nvme") {
             Transport::Nvme
@@ -642,11 +641,15 @@ fn detect_gpus(db: &PciDb) -> Vec<Gpu> {
             .map_or(false, |c| exists(c.join("power_dpm_state")));
         let intel_freqs = match (&card, driver.as_deref()) {
             (Some(c), Some("i915")) => {
+                // Older kernels: gt_RPn_freq_mhz in the card dir. Newer ones: gt/gt0/rps_RPn_freq_mhz.
+                let f = |legacy: &str, modern: &str| {
+                    read_u64(c.join(legacy)).or_else(|| read_u64(c.join("gt/gt0").join(modern)))
+                };
                 match (
-                    read_u64(c.join("gt_RPn_freq_mhz")),
-                    read_u64(c.join("gt_RP0_freq_mhz")),
+                    f("gt_RPn_freq_mhz", "rps_RPn_freq_mhz"),
+                    f("gt_RP0_freq_mhz", "rps_RP0_freq_mhz"),
                 ) {
-                    (Some(n), Some(p0)) => Some((n, read_u64(c.join("gt_RP1_freq_mhz")), p0)),
+                    (Some(n), Some(p0)) => Some((n, f("gt_RP1_freq_mhz", "rps_RP1_freq_mhz"), p0)),
                     _ => None,
                 }
             }
@@ -725,7 +728,7 @@ fn detect_net() -> Vec<NetIf> {
             continue; // virtual interface
         }
         let driver = link_base(d.join("device/driver"));
-        let canon = fs::canonicalize(d.join("device")).unwrap_or_default();
+        let canon = canon(d.join("device"));
         let bus = if canon.to_string_lossy().contains("/usb") {
             "usb"
         } else {

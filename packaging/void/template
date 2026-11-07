@@ -1,6 +1,6 @@
 # Template file for 'auto-tlp' (copy to srcpkgs/auto-tlp/template in void-packages)
 pkgname=auto-tlp
-version=0.1.0
+version=0.2.0
 revision=1
 build_style=cargo
 short_desc="Scans your hardware and generates a tailored TLP configuration"

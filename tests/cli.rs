@@ -65,6 +65,16 @@ fn bad_arguments_exit_with_code_2() {
         &["--tlp-version", "abc"],
         &["--tlp-version"],
         &["--demo", "--install"],
+        &["--apply"],
+        &["--install", "--uninstall"],
+        &["--against", "/tmp/x"],
+        &["--diff", "--report"],
+        &["--diff", "--install"],
+        &["--only", "bogus"],
+        &["--skip", "cpu,nonsense"],
+        &["--format", "yaml"],
+        &["--format", "nix", "--install"],
+        &["--demo", "--format", "json", "--diff"],
     ] {
         let o = bin(args);
         assert_eq!(o.status.code(), Some(2), "args {args:?} should fail with 2");
@@ -212,4 +222,52 @@ fn demo_profiles_differ_where_they_should() {
     ]));
     assert!(bal.contains("CPU_BOOST_ON_BAL=\"0\""));
     assert!(perf.contains("CPU_BOOST_ON_BAL=\"1\""));
+}
+
+// ---- output formats, sections, stdout output ----
+
+#[test]
+fn demo_nix_format() {
+    let o = bin(&["--demo", "--tlp-version", "1.11", "--format", "nix"]);
+    assert!(o.status.success());
+    let t = text(&o);
+    assert!(t.contains("services.tlp = {"));
+    assert!(t.contains("CPU_BOOST_ON_PRF = \"1\";"));
+    assert!(!t.contains("TLP_ENABLE"));
+    assert_eq!(t.matches('{').count(), t.matches('}').count());
+}
+
+#[test]
+fn demo_json_format() {
+    let o = bin(&["--demo", "--tlp-version", "1.11", "--format", "json"]);
+    assert!(o.status.success());
+    let t = text(&o);
+    assert!(t.starts_with("{\n") && t.trim_end().ends_with('}'));
+    assert!(t.contains("\"CPU_BOOST_ON_PRF\": \"1\""));
+    assert!(t.contains("\"TLP_ENABLE\": \"1\""));
+}
+
+#[test]
+fn demo_only_and_skip() {
+    let t = text(&bin(&["--demo", "--only", "battery"]));
+    assert!(t.contains("START_CHARGE_THRESH_BAT0"));
+    assert!(!t.contains("CPU_BOOST") && !t.contains("DISK_"));
+    let t = text(&bin(&["--demo", "--skip", "cpu,storage,usb"]));
+    assert!(!t.contains("CPU_BOOST") && !t.contains("DISK_") && !t.contains("USB_"));
+    assert!(t.contains("PCIE_ASPM"));
+}
+
+#[test]
+fn output_dash_means_stdout() {
+    let dir = std::env::temp_dir().join(format!("auto-tlp-dash-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let o = Command::new(env!("CARGO_BIN_EXE_auto-tlp"))
+        .current_dir(&dir)
+        .args(["--demo", "-o", "-"])
+        .output()
+        .unwrap();
+    assert!(o.status.success());
+    assert!(text(&o).contains("TLP_ENABLE"));
+    assert!(!dir.join("-").exists(), "'-' must not create a file");
+    let _ = std::fs::remove_dir_all(&dir);
 }

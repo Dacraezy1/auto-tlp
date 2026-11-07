@@ -1,6 +1,6 @@
 # Maintainer: Dacraezy1 <dacraezy1@users.noreply.github.com>
 pkgname=auto-tlp
-pkgver=0.1.0
+pkgver=0.2.0
 pkgrel=0
 pkgdesc="Scans your hardware and generates a clean, tailored TLP configuration"
 url="https://github.com/Dacraezy1/auto-tlp"

@@ -9,6 +9,14 @@ _arguments \
   '(-r --report)'{-r,--report}'[print the detected hardware report]' \
   '(-v --verbose)'{-v,--verbose}'[with --report: list all PCI/USB devices]' \
   '--terse[omit explanatory comments]' \
+  '--only[only these sections]:sections:(general cpu platform graphics storage pcie radios usb audio kernel battery)' \
+  '--skip[leave these sections out]:sections:(general cpu platform graphics storage pcie radios usb audio kernel battery)' \
+  '--format[output format]:format:(conf nix json)' \
+  '--uninstall[remove /etc/tlp.d/99-auto-tlp.conf (needs root)]' \
+  '--apply[run tlp start after --install/--uninstall]' \
+  '--diff[compare with the installed config (exit 1 if different)]' \
+  '--against[with --diff: compare with FILE]:file:_files' \
+  '--sysroot[scan a directory tree instead of the live system]:dir:_files -/' \
   '--tlp-version[generate for this TLP version (>=1.11 = new key names)]:version:' \
   '--demo[use a built-in sample laptop instead of scanning]' \
   '(-h --help)'{-h,--help}'[show help]' \

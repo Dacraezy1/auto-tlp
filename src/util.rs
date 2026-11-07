@@ -1,13 +1,57 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 // Copyright (C) 2026 Dacraezy1
 //! Small helpers for reading sysfs/procfs and running commands.
+//!
+//! Every system path goes through [`real`], so the whole scan can be pointed at a directory tree
+//! instead of the live machine with [`set_root`] (`--sysroot`). That is how the detection code is
+//! tested against fixture "laptops" without needing the hardware.
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::sync::OnceLock;
+
+static ROOT: OnceLock<PathBuf> = OnceLock::new();
+
+/// Scan `dir` instead of the live system. Must be called once, before any detection.
+pub fn set_root(dir: PathBuf) {
+    let dir = fs::canonicalize(&dir).unwrap_or(dir);
+    let _ = ROOT.set(dir);
+}
+
+pub fn has_root() -> bool {
+    ROOT.get().is_some()
+}
+
+/// Map a logical system path (`/sys/...`) to its real location (under the sysroot, if one is set).
+pub fn real<P: AsRef<Path>>(p: P) -> PathBuf {
+    let p = p.as_ref();
+    match ROOT.get() {
+        Some(root) => root.join(p.strip_prefix("/").unwrap_or(p)),
+        None => p.to_path_buf(),
+    }
+}
+
+/// Inverse of [`real`]: turn a path found on disk back into a logical system path.
+fn logical(p: PathBuf) -> PathBuf {
+    match ROOT.get() {
+        Some(root) => match p.strip_prefix(root) {
+            Ok(rest) => Path::new("/").join(rest),
+            Err(_) => p,
+        },
+        None => p,
+    }
+}
+
+/// Canonical (symlink-free) logical path.
+pub fn canon<P: AsRef<Path>>(p: P) -> PathBuf {
+    fs::canonicalize(real(p.as_ref()))
+        .map(logical)
+        .unwrap_or_else(|_| p.as_ref().to_path_buf())
+}
 
 /// Read a file, trimmed. `None` if missing, unreadable or empty.
 pub fn read<P: AsRef<Path>>(p: P) -> Option<String> {
-    let s = fs::read_to_string(p).ok()?;
+    let s = fs::read_to_string(real(p)).ok()?;
     let t = s.trim();
     if t.is_empty() {
         None
@@ -21,13 +65,16 @@ pub fn read_u64<P: AsRef<Path>>(p: P) -> Option<u64> {
 }
 
 pub fn exists<P: AsRef<Path>>(p: P) -> bool {
-    p.as_ref().exists()
+    real(p).exists()
 }
 
 /// Sorted directory entries (empty vec if the dir does not exist).
 pub fn list_dir<P: AsRef<Path>>(p: P) -> Vec<PathBuf> {
-    let mut v: Vec<PathBuf> = fs::read_dir(p)
-        .map(|rd| rd.filter_map(|e| e.ok().map(|e| e.path())).collect())
+    let mut v: Vec<PathBuf> = fs::read_dir(real(p))
+        .map(|rd| {
+            rd.filter_map(|e| e.ok().map(|e| logical(e.path())))
+                .collect()
+        })
         .unwrap_or_default();
     v.sort();
     v
@@ -41,7 +88,7 @@ pub fn base(p: &Path) -> String {
 
 /// Final path component of a symlink target (e.g. `device/driver` -> `ahci`).
 pub fn link_base<P: AsRef<Path>>(p: P) -> Option<String> {
-    fs::read_link(p)
+    fs::read_link(real(p))
         .ok()
         .and_then(|t| t.file_name().map(|s| s.to_string_lossy().into_owned()))
 }
@@ -49,6 +96,9 @@ pub fn link_base<P: AsRef<Path>>(p: P) -> Option<String> {
 /// Run a command and return its trimmed stdout (even on non-zero exit,
 /// because e.g. `systemctl is-active` exits 3 when inactive).
 pub fn run(cmd: &str, args: &[&str]) -> Option<String> {
+    if has_root() {
+        return None; // a sysroot scan is hermetic: never run host commands
+    }
     let out = Command::new(cmd).args(args).output().ok()?;
     let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
     if s.is_empty() {
@@ -65,7 +115,7 @@ pub fn command_exists(name: &str) -> bool {
     for extra in ["/usr/sbin", "/sbin", "/usr/bin", "/bin"] {
         dirs.push(PathBuf::from(extra));
     }
-    dirs.iter().any(|d| d.join(name).is_file())
+    dirs.iter().any(|d| real(d.join(name)).is_file())
 }
 
 pub fn module_loaded(name: &str) -> bool {

@@ -33,6 +33,21 @@ The project deliberately has **no crate dependencies**. Please keep it that way.
 | `src/demo.rs` | Built-in sample laptop used by `--demo`, CI and the unit tests. |
 | `src/main.rs` | CLI parsing, `--install`, warnings output. |
 
+### Testing detection without the hardware
+
+`auto-tlp --sysroot DIR` scans a directory tree instead of the live system (and never runs host commands).
+`tests/common/mod.rs` builds fake machines with the same relative-symlink layout the kernel uses:
+
+```rust
+let f = Fake::new();
+f.base().intel_cpu(8).battery("BAT0", true, true).nvme("[none] mq-deadline").intel_gpu();
+let out = f.run(&["-p", "balanced"]);          // runs the real binary against it
+assert!(has(&stdout(&out), r#"STOP_CHARGE_THRESH_BAT0="80""#));
+```
+
+When someone reports a misdetection, reproduce it by adding the missing files to a fixture (copy the layout from
+their `--report --verbose` output), write the failing test in `tests/sysroot.rs`, then fix the detection.
+
 ### Rules of thumb
 
 1. **Only emit a key if the hardware supports it.** Add a test proving it is absent when the hardware is absent.

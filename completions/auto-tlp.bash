@@ -8,8 +8,12 @@ _auto_tlp() {
     case "$prev" in
         -p|--profile) COMPREPLY=( $(compgen -W "balanced performance battery" -- "$cur") ); return ;;
         -o|--output)  COMPREPLY=( $(compgen -f -- "$cur") ); return ;;
+        --only|--skip) COMPREPLY=( $(compgen -W "general cpu platform graphics storage pcie radios usb audio kernel battery" -- "$cur") ); return ;;
+        --format)      COMPREPLY=( $(compgen -W "conf nix json" -- "$cur") ); return ;;
+        --against)     COMPREPLY=( $(compgen -f -- "$cur") ); return ;;
+        --sysroot)     COMPREPLY=( $(compgen -d -- "$cur") ); return ;;
         --start-thresh|--stop-thresh|--tlp-version) return ;;
     esac
-    COMPREPLY=( $(compgen -W "-p --profile --start-thresh --stop-thresh -o --output --install -r --report -v --verbose --terse --tlp-version --demo -h --help -V --version" -- "$cur") )
+    COMPREPLY=( $(compgen -W "-p --profile --start-thresh --stop-thresh -o --output --install -r --report -v --verbose --only --skip --format --uninstall --apply --diff --against --sysroot --terse --tlp-version --demo -h --help -V --version" -- "$cur") )
 }
 complete -F _auto_tlp auto-tlp

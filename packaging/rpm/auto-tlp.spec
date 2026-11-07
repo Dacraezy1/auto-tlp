@@ -3,7 +3,7 @@
 %global debug_package %{nil}
 
 Name:           auto-tlp
-Version:        0.1.0
+Version:        0.2.0
 Release:        1%{?dist}
 Summary:        Scans your hardware and generates a tailored TLP configuration
 License:        GPL-3.0-or-later
